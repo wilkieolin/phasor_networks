@@ -13,17 +13,11 @@ class StaticLinear(keras.layers.Layer):
     def __init__(self, n_in, n_out, overscan=1.0):
         super(StaticLinear, self).__init__()
         
-        #w_init = tf.random_uniform_initializer(minval=-1.0, maxval=1.0)
-        #w_init = tf.random_normal_initializer()
         self.w = tf.Variable(
             initial_value = construct_sparse(n_in, n_out, overscan),
             trainable = False)
 
         self.rev_w = tf.linalg.pinv(self.w)
-
-        # self.rev_w = tf.Variable(
-        #     initial_value = tf.linalg.pinv(self.w),
-        #     trainable = False)
 
     def reverse(self, inputs):
         return tf.matmul(inputs, self.rev_w)
@@ -55,6 +49,7 @@ class CmpxLinear(keras.layers.Layer):
         )
         self.n_in = self.w.shape[0]
 
+        #add bias?
         # self.b = self.add_weight(
         #     shape=self.units,
         #     initializer="zeros",
@@ -71,7 +66,6 @@ class CmpxLinear(keras.layers.Layer):
 
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes
-        spikes_i = spikes_i #one-index values here so there isn't confusion with false(0) and first index
         window = self.window
         neurons = self.n_in
         currents = np.zeros((neurons), dtype="float")
@@ -98,8 +92,6 @@ class CmpxLinear(keras.layers.Layer):
         return dz.numpy()
 
     #currently inference only
-    #TODO - implement using TF odeint adjoint method?
-    #TODO - implement vectorized batching?
     def call_dynamic(self, inputs):
         solutions = []
         outputs = []
@@ -112,7 +104,7 @@ class CmpxLinear(keras.layers.Layer):
 
             i_fn = lambda t: self.current(t, (input_i, input_t))
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
-            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step, vectorized=False)
+            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
             solutions.append(sol)
 
             if self.spk_mode == "gradient":

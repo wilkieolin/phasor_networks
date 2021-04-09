@@ -7,7 +7,7 @@ import tensorflow.keras.backend as be
 from utils import *
 from data import *
 from layers import *
-from easy_model import *
+from models import *
 
 """
 ############# Standard models #################
@@ -19,9 +19,9 @@ def make_standard():
     model = keras.Sequential([layers.Input(input_shape),
                          layers.Flatten(),
                          layers.Dropout(0.25),
-                         layers.Dense(100, activation="relu"),
+                         layers.Dense(100, activation="relu", use_bias=False),
                          layers.Dropout(0.25),
-                         layers.Dense(10, activation="sigmoid")])
+                         layers.Dense(10, activation="sigmoid", use_bias=False)])
     
     model.compile(optimizer="rmsprop", 
               loss=keras.losses.SparseCategoricalCrossentropy(), 
@@ -34,9 +34,9 @@ def make_standard_dot():
                          layers.Flatten(),
                          StaticLinear(n_px, n_px),
                          layers.Dropout(0.25),
-                         layers.Dense(100, activation="relu"),
+                         layers.Dense(100, activation="relu", use_bias=False),
                          layers.Dropout(0.25),
-                         layers.Dense(10, activation="sigmoid")])
+                         layers.Dense(10, activation="sigmoid", use_bias=False)])
     
     direction = 2.0 * (tf.cast(tf.random.uniform((1, n_px)) > 0.5, dtype="float")) - 1.0
     model.layers[2].w = tf.multiply(tf.eye(n_px), direction)
@@ -53,9 +53,9 @@ def make_standard_RP():
                          StaticLinear(n_px, n_px, 100),
                          layers.BatchNormalization(),
                          layers.Dropout(0.25),
-                         layers.Dense(100, activation="relu"),
+                         layers.Dense(100, activation="relu", use_bias=False),
                          layers.Dropout(0.25),
-                         layers.Dense(10, activation="sigmoid")])
+                         layers.Dense(10, activation="sigmoid", use_bias=False)])
     
     model.compile(optimizer="rmsprop", 
               loss=keras.losses.SparseCategoricalCrossentropy(), 
