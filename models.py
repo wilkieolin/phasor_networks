@@ -301,5 +301,233 @@ class PhasorModel(keras.Model):
 
 
         
+class Conv2DPhasorModel(keras.Model):
+    def __init__(self, input_shape, **kwargs):
+        super(Conv2DPhasorModel, self).__init__()
+        #static parameters
+        self.overscan = kwargs.get("overscan", 100)
+        self.sigma = kwargs.get("sigma", 3.0)
+        self.n_hidden = kwargs.get("n_hidden", 1000)
+        self.n_classes = kwargs.get("n_classes", 10)
+        self.onehot_offset = kwargs.get("onehot_offset", -0.5)
+        self.onehot_phase = kwargs.get("onehot_phase", 1.0)
+        self.projection = kwargs.get("projection", "dot")
+        self.dropout_rate = kwargs.get("dropout_rate", 0.25)
 
+        #dynamic parameters
+        self.dyn_params = {
+            "leakage" : kwargs.get("leakage", -0.2),
+            "period" : kwargs.get("period", 1.0),
+            "window" : kwargs.get("window", 0.05),
+            "spk_mode" : kwargs.get("spk_mode", "gradient"),
+            "threshold" : kwargs.get("threshold", 0.03),
+            "exec_time" : kwargs.get("exec_time", 10.0),
+            "max_step" : kwargs.get("max_step", 0.02)
+        }
+        self.repeats = kwargs.get("repeats", 10)
+
+        self.image_shape = input_shape
+        self.n_feat = tf.reduce_prod(self.image_shape).numpy().astype('int')
+
+        #define the RPP projection
+        if self.projection == "dot":
+            self.direction = 2.0 * (tf.cast(tf.random.uniform((1, *self.image_shape)) > 0.5, dtype="float")) - 1.0
+
+        self.conv1 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv1")
+        self.conv2 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv2")
+        self.conv3 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv3")
+        self.conv4 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv4")
+        self.flatten = layers.Flatten()
+        self.dropout1 = layers.Dropout(self.dropout_rate, name="dropout1")
+        self.dense1 = CmpxLinear(self.n_hidden, **self.dyn_params, name="complex1")
+        self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
+        self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
+
+        self.build(input_shape)
+
+    def _mean_prediction(self, yh):
+        #take the average across phases
+        yh_avg = np.nanmean(yh, axis=1)
+        yh_i = np.argmin(np.abs(yh_avg - self.onehot_phase), axis=1)
+        return yh_i
+
+    def _mode_prediction(self, yh):
+        yh_i = np.argmin(np.abs(yh - self.onehot_phase), axis=2)
+        yh_i = mode(yh_i, axis=1)[0]
+        return yh_i.ravel()
+
+    def _static_prediction(self, yh):
+        yh_i = tf.argmin(tf.math.abs(yh - self.onehot_phase), axis=1)
+        return yh_i
+
+
+    def accuracy(self, loader, confusion=True,  similarity=False, method="static"):
+        guesses = np.zeros((self.n_classes, self.n_classes), dtype=np.int)
+
+        if similarity:
+            samples = np.zeros_like(guesses, dtype=np.float)
+
+        for data in loader:
+            x, y = data
+            ns = x.shape[0]
+
+            if method == "dynamic_mean" or method == "dynamic":
+                yh = self.call_dynamic(x)
+                yh_i = self._mean_prediction(yh)
+
+            elif method == "dynamic_mode":
+                yh = self.call_dynamic(x)
+                yh_i = self._mode_prediction(yh)
+
+            else:
+                yh = self.call(x)
+                yh_i = self._static_prediction(yh)
+
+            for i in range(ns):
+                guesses[y[i], yh_i[i]] += 1
+
+                if similarity:
+                    samples[y[i],:] += similarity(yh, self.to_phase(y))
+
+        rvals = []
+        total = tf.math.reduce_sum(guesses)
+
+        if confusion:
+            rvals.append(guesses)
+        else:
+            correct = tf.math.reduce_sum(tf.linalg.diag_part(guesses))
+            rvals.append(correct / total)
+
+        if similarity:
+            rvals.append(samples / tf.math.reduce_sum(guesses, axis=1))
+
+        return tuple(rvals)
+
+    def build(self, input_shape):
+        #ignore the batch size at each step
+        self.conv1.build(input_shape)
+        s1 = self.conv1.operation.output_shape[1:]
+
+        self.conv2.build(s1)
+        s2 = self.conv2.operation.output_shape[1:]
+
+        self.conv3.build(s2)
+        s3 = self.conv3.operation.output_shape[1:]
+
+        self.conv4.build(s3)
+        s4 = self.conv4.operation.output_shape[1:]
+
+        n_s4 = np.prod(s4)
+        self.dense1.build([n_s4])
+        self.dense2.build([self.n_hidden])
+
+        self.built = True
+            
+
+    def call(self, inputs):
+        if self.projection == "dot":
+            x = tf.multiply(self.direction, inputs)
+        else:
+            x = inputs
+
+        x = self.conv1.call_static(x)
+        x = self.conv2.call_static(x)
+        x = self.conv3.call_static(x)
+        x = self.conv4.call_static(x)
+        x = self.flatten(x)
+
+        x = self.dropout1(x)
+        x = self.dense1.call_static(x)
+
+        x = self.dropout2(x)
+        x = self.dense2.call_static(x)
+
+        return x
+
+    def call_dynamic(self, inputs):
+        x = self.flatten(inputs)
+        if self.projection == "dot":
+            x = tf.multiply(self.direction, x)
+
+        #convert continuous time representations into periodic spike train
+        s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
+        s = self.conv1.call_dynamic(s)
+        s = self.conv2.call_dynamic(s)
+        s = self.conv3.call_dynamic(s)
+        s = self.conv4.call_dynamic(s)
+        #TODO - flatten op on train
+        s = self.dense1.call_dynamic(s)
+        s = self.dense2.call_dynamic(s)
+        #convert the spikes back to phases
+        y = train_to_phase(s, (self.n_classes), depth=1, repeats=self.repeats, period=self.dyn_params["periodd"])
+
+        return np.stack(y, axis=0)
+
+    def evaluate(self, loader, method="static"):
+        outputs = []
+
+        for data in loader:
+            x, y = data
+            ns = x.shape[0]
+
+            if method == "dynamic":
+                yh = self.call_dynamic(x)
+                
+            else:
+                yh = self.call(x)
+
+            outputs.append(yh)
+
+        return tf.concat(outputs, axis=0)
+
+    def train(self, loader, epochs, report_interval=100):
+        losses = []
+
+        for _ in range(epochs):
+            for step, data in enumerate(loader):
+                x, y = data
+
+                loss = self.train_step(x, y)
+                losses.append(loss)
+
+                if step % report_interval == 0:
+                    print("Training loss", loss)
+
+        return np.array(losses)
+
+    def predict(self, yh, method="static"):
+        if method=="static":
+            return self._static_prediction(yh)
+
+        elif method=="dynamic_mode":
+            return self._mode_prediction(yh)
+
+        else:
+            return self._mean_prediction(yh)
+
+
+    def to_phase(self, y):
+        onehot = lambda x: be.one_hot(x, self.n_classes)
+        return onehot(y) * self.onehot_phase + self.onehot_offset
+
+    def train_step(self, x, y):
+        y_phase = self.to_phase(y)
+
+        with tf.GradientTape() as tape:
+            yh = self.call(x)
+            loss = vsa_loss(yh, y_phase)
+
+        trainable_vars = [*self.trainable_variables]
+        gradients = tape.gradient(loss, trainable_vars)
+
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        return loss
+
+    """
+    Return the series of phases produced at output for each cycle
+    """
+    def train_to_phase(trains, depth=0):
+        repeats = self.repeats
+
+        return None
         

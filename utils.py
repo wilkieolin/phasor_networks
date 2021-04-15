@@ -61,7 +61,6 @@ def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
     above_t = voltage > threshold
     spks = spks * above_t
     
-        
     #apply the refractory period
     if refractory > 0.0:
         for t in range(n_t):
@@ -131,6 +130,36 @@ def phase_to_complex(x):
     im = tf.complex(0.0, 1.0)
     return tf.exp(im * x * pi)
 
+def phase_to_train(x, shape, period=1.0, repeats=3):
+        n_batch = x.shape[0]
+        features = np.prod(shape)
+
+        output = []
+
+        for b in range(n_batch):
+            t_phase0 = period/2.0
+
+            #create the list of indices with arbitrary dimension
+            inds = tf.range(0, features, delta=1)
+            inds = tf.tile(inds, [repeats])
+            inds = tf.unravel_index(inds, shape)
+            
+            #list the time offset for each index and repeat it for repeats cycles
+            times = x[b,...] * t_phase0 + t_phase0
+            times = tf.reshape(times, (-1))
+            times = tf.tile(times, [repeats])
+            
+            #create a list of time offsets to move spikes forward by T for repetitions
+            offsets = tf.range(0, repeats, delta=1, dtype="float")
+            offsets = tf.repeat(offsets, features, axis=0)
+            offsets = tf.reshape(offsets, (-1)) * tf.constant(period)
+            
+            times += offsets
+            
+            output.append( (inds, times) )
+        
+        return output
+
 """
 Move phases from (-inf, inf) into (-pi, pi)
 """
@@ -190,6 +219,52 @@ def similarity(x, y):
     assert x.shape == y.shape, "Function is for comparing similarity of tensors with identical shapes and 1:1 mapping: " + str(x.shape) + " " + str(y.shape)
     pi = tf.constant(np.pi)
     return tf.math.reduce_mean(tf.math.cos(pi*(x - y)), axis=1)
+
+def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
+    n_b = len(trains)
+
+    outputs = []
+    for i in range(n_b):
+        out_i, out_t = trains[i]
+        all_phases = np.nan * np.zeros((repeats, *shape), "float")
+        #all_phases = []
+        
+        #assuming eigenfrenquency is same as 1/period
+        offset = period/4.0
+        #compensate for the delay in turning current into voltage & moving deeper in layers
+        offset = (depth+1)*offset
+        
+        for j in range(repeats):
+            #find the start and stop of the period for this cycle
+            tcenter = j*period + offset
+            halfcycle = period/2.0
+            tstart = tcenter - halfcycle
+            tstop =  tcenter + halfcycle
+            #print(str(tstart) + " " + str(tstop))
+
+
+            #grab the corresponding indices and values from the solution
+            cast = lambda x: tf.cast(x, "float")
+            
+            inds = tf.where(cast(out_t > tstart) * cast(out_t < tstop))
+
+            phases = tf.gather(out_t, inds)
+            phases = (phases - offset) % period
+            phases = 2.0 * phases - 1.0
+            phases = tf.reshape(phases, -1).numpy()
+            
+            indices = tf.gather(out_i, inds, axis=1)[:,:,0]
+            
+            for k in range(indices.shape[1]):
+                ind = indices[:,k].numpy()
+                all_phases[j, ind[0], ind[1], ind[2]] = phases[k]
+                
+            #all_phases.append(tf.scatter_nd(tf.transpose(indices), phases, shape=shape))
+            
+
+        outputs.append(tf.stack(all_phases, axis=0))
+
+    return outputs
 
 """
 A loss function which maximises similarity between all VSA vectors.

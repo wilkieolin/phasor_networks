@@ -38,7 +38,7 @@ class CmpxLinear(keras.layers.Layer):
         self.spk_mode = kwargs.get("spk_mode", "gradient")
         self.threshold = kwargs.get("threshold", 0.03)
         self.exec_time = kwargs.get("exec_time", 10.0)
-        self.max_step = kwargs.get("max_step", 0.005)
+        self.max_step = kwargs.get("max_step", 0.01)
 
     def build(self, input_shape):
         self.w = self.add_weight(
@@ -150,6 +150,157 @@ class CmpxLinear(keras.layers.Layer):
 
     def set_weights(self, weights):
         self.w.value = weights[0]
+
+class CmpxConv2D(keras.layers.Layer):
+    def __init__(self, filters, kernel_size, **kwargs):
+        super(CmpxConv2D, self).__init__()
+        self.filters = filters
+        self.kernel_size = kernel_size
+        
+        #dynamic execution constants
+        self.leakage = kwargs.get("leakage", -0.2)
+        self.period = kwargs.get("period", 1.0)
+        #set the eigenfrequency to 1/T
+        self.ang_freq = 2 * np.pi / self.period
+        self.window = kwargs.get("window", 0.05)
+        self.spk_mode = kwargs.get("spk_mode", "gradient")
+        self.threshold = kwargs.get("threshold", 0.03)
+        self.exec_time = kwargs.get("exec_time", 10.0)
+        self.max_step = kwargs.get("max_step", 0.01)
+
+    def build(self, input_shape):
+        self.image_shape = input_shape
+        self.n_inputs = tf.math.reduce_prod(self.image_shape)
+
+        #create the convolutional operation via a sub-model
+        self.operation = keras.Sequential([layers.Input(self.image_shape),
+            layers.Conv2D(self.filters, 
+            kernel_size=self.kernel_size,
+            input_shape=input_shape,
+            use_bias=False)])
+
+        #build the output shape
+        self.operation.build(self.image_shape)
+        sample = tf.random.uniform((1, *input_shape))
+        self.call_static(sample)
+
+        
+    def call(self, inputs, mode="static"):
+        if mode=="dynamic":
+            output = self.call_dynamic(inputs)
+        else:
+            output = self.call_static(inputs)
+
+        return output
+
+    def current(self, t, spikes):
+        spikes_i, spikes_t = spikes
+        window = self.window
+        
+        shape = self.image_shape
+        cast = lambda x: tf.cast(x, "float")
+        box_start = cast(tf.constant(t - window))
+        box_end = cast(tf.constant(t + window))
+
+        #determine which spikes at this time are active
+        pre = cast(spikes_t < box_end)
+        post = cast(spikes_t > box_start)
+        active_i = tf.where(pre * post)[:,0]
+
+        #get the indices of the neurons those active times correspond to
+        active_i = tf.gather(spikes_i, active_i, axis=1)
+        active_i = tf.cast(active_i, "int64")
+        
+        n_active = active_i.shape[1]
+        
+        if n_active > 0:
+            active_i = tf.transpose(active_i)
+            updates = tf.ones(n_active)
+            currents = tf.scatter_nd(active_i, updates, shape=shape)
+        else:
+            currents = tf.zeros(shape, dtype="float")
+        
+        #add a 'dummy' batch of 1 for the convolutional input
+        currents = tf.expand_dims(currents, axis=0)
+        return currents
+
+    def dz(self, t, z, current):
+        #constant which defines leakage, oscillation
+        k = tf.complex(self.leakage, self.ang_freq)
+        
+        real_output = self.operation(current(t))
+        imag_output = tf.zeros_like(real_output)
+        currents = tf.complex(real_output, imag_output)
+
+        flatten = lambda x: tf.reshape(x, -1)
+        
+        dz = k * z + flatten(currents)
+        return dz.numpy()
+
+    #currently inference only
+    def call_dynamic(self, inputs):
+        solutions = []
+        outputs = []
+        n_batches = len(inputs)
+
+        out_shape = self.operation.output_shape[1:]
+        n_neurons = np.prod(out_shape)
+
+        for i in tqdm(range(n_batches)):
+            input_i = inputs[i][0]
+            input_t = inputs[i][1]
+            
+            z0 = np.zeros(n_neurons, "complex")
+
+            i_fn = lambda t: self.current(t, (input_i, input_t))
+            dz_fn = lambda t,z: self.dz(t, z, i_fn)
+            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+            solutions.append(sol)
+
+            if self.spk_mode == "gradient":
+                spk = findspks(sol, threshold=self.threshold, period=self.period)
+            elif self.spk_mode == "cyclemax":
+                spk = findspks_max(sol, threshold=self.threshold, period=self.period)
+            else:
+                print("WARNING: Spike mode not recognized, defaulting to gradient")
+                spk = findspks(sol, threshold=self.threshold, period=self.period)
+            
+            spks = tf.where(spk > 0.0)
+            spk_tms = tf.gather(sol.t, spks[:,1])
+            spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
+            
+            outputs.append( (spk_inds, spk_tms) )
+
+        self.solutions = solutions
+        self.spike_trains = outputs
+        return outputs
+
+
+    def call_static(self, inputs):
+        pi = tf.constant(np.pi)
+        #convert the phase angles into complex vectors
+        inputs = phase_to_complex(inputs)
+        #scale the complex vectors by weight and sum
+        real_output = self.operation.call(tf.math.real(inputs))
+        imag_output = self.operation.call(tf.math.imag(inputs))
+        output = tf.complex(real_output, imag_output)
+        #convert them back to phase angles
+        output = tf.math.angle(output) / pi
+
+        return output
+
+
+    def get_config(self):
+        config = super(CmpxConv2D, self).get_config()
+        config.update({"filters", self.filters})
+        config.update({"kernel_size", self.kernel_size})
+        return config
+
+    def get_weights(self):
+        return [self.operation.kernel.numpy()]
+
+    def set_weights(self, weights):
+        self.operation.kernel.value = weights[0]
         
 
 class Normalize(keras.layers.Layer):
