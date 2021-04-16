@@ -333,14 +333,20 @@ class Conv2DPhasorModel(keras.Model):
         if self.projection == "dot":
             self.direction = 2.0 * (tf.cast(tf.random.uniform((1, *self.image_shape)) > 0.5, dtype="float")) - 1.0
 
+        self.batchnorm = layers.BatchNormalization()
         self.conv1 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv1")
         self.conv2 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv2")
+        self.maxpool1 = layers.MaxPool2D((2,2))
+        self.dropout1 = layers.Dropout(self.dropout_rate, name="dropout1")
+        
         self.conv3 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv3")
         self.conv4 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv4")
-        self.flatten = layers.Flatten()
-        self.dropout1 = layers.Dropout(self.dropout_rate, name="dropout1")
-        self.dense1 = CmpxLinear(self.n_hidden, **self.dyn_params, name="complex1")
+        self.maxpool2 = layers.MaxPool2D((2,2))
         self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
+
+        self.flatten = layers.Flatten()
+        self.dense1 = CmpxLinear(self.n_hidden, **self.dyn_params, name="complex1")
+        self.dropout3 = layers.Dropout(self.dropout_rate, name="dropout3")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
 
     def _mean_prediction(self, yh):
@@ -408,16 +414,20 @@ class Conv2DPhasorModel(keras.Model):
         else:
             x = inputs
 
+        x = self.batchnorm(x)
         x = self.conv1(x)
         x = self.conv2(x)
+        x = self.maxpool1(x)
+        x = self.dropout1(x)
+
         x = self.conv3(x)
         x = self.conv4(x)
-        x = self.flatten(x)
-
-        x = self.dropout1(x)
-        x = self.dense1(x)
-
+        x = self.maxpool2(x)
         x = self.dropout2(x)
+
+        x = self.flatten(x)
+        x = self.dense1(x)
+        x = self.dropout3(x)
         x = self.dense2(x)
 
         return x
