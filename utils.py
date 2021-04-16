@@ -112,6 +112,25 @@ def findspks_max(sol, threshold=0.05, period=1.0):
     all_spks = np.concatenate((all_spks, np.zeros((n_neurons, missing_t))), axis=1)
     return all_spks
 
+# def fold(input, kernel_size, filters):
+#     n_batch = input.shape[0]
+#     n_x, n_y, n_c = input.shape[1:]
+    
+#     kernel_x = kernel_size[0]
+#     kernel_y = kernel_size[1]
+#     n_x2 = (n_x - kernel_x) + 1
+#     n_y2 = (n_y - kernel_y) + 1
+
+#     blocks = []
+#     for i in range(n_x2):
+#         for j in range(n_y2):
+
+#             range_x = i:(i+kernel_x)
+#             range_y = j:(j+kernel_y)
+
+#             kernel_data = 
+
+
 
 def limit_gpus():
     physical_devices = tf.config.experimental.list_physical_devices('GPU')

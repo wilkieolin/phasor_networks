@@ -309,8 +309,8 @@ class Conv2DPhasorModel(keras.Model):
         self.sigma = kwargs.get("sigma", 3.0)
         self.n_hidden = kwargs.get("n_hidden", 1000)
         self.n_classes = kwargs.get("n_classes", 10)
-        self.onehot_offset = kwargs.get("onehot_offset", -0.5)
-        self.onehot_phase = kwargs.get("onehot_phase", 1.0)
+        self.onehot_offset = kwargs.get("onehot_offset", 0.5)
+        self.onehot_phase = kwargs.get("onehot_phase", 0.0)
         self.projection = kwargs.get("projection", "dot")
         self.dropout_rate = kwargs.get("dropout_rate", 0.25)
 
@@ -342,8 +342,6 @@ class Conv2DPhasorModel(keras.Model):
         self.dense1 = CmpxLinear(self.n_hidden, **self.dyn_params, name="complex1")
         self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
-
-        self.build(input_shape)
 
     def _mean_prediction(self, yh):
         #take the average across phases
@@ -403,26 +401,6 @@ class Conv2DPhasorModel(keras.Model):
 
         return tuple(rvals)
 
-    def build(self, input_shape):
-        #ignore the batch size at each step
-        self.conv1.build(input_shape)
-        s1 = self.conv1.operation.output_shape[1:]
-
-        self.conv2.build(s1)
-        s2 = self.conv2.operation.output_shape[1:]
-
-        self.conv3.build(s2)
-        s3 = self.conv3.operation.output_shape[1:]
-
-        self.conv4.build(s3)
-        s4 = self.conv4.operation.output_shape[1:]
-
-        n_s4 = np.prod(s4)
-        self.dense1.build([n_s4])
-        self.dense2.build([self.n_hidden])
-
-        self.built = True
-            
 
     def call(self, inputs):
         if self.projection == "dot":
@@ -430,22 +408,21 @@ class Conv2DPhasorModel(keras.Model):
         else:
             x = inputs
 
-        x = self.conv1.call_static(x)
-        x = self.conv2.call_static(x)
-        x = self.conv3.call_static(x)
-        x = self.conv4.call_static(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
         x = self.flatten(x)
 
         x = self.dropout1(x)
-        x = self.dense1.call_static(x)
+        x = self.dense1(x)
 
         x = self.dropout2(x)
-        x = self.dense2.call_static(x)
+        x = self.dense2(x)
 
         return x
 
     def call_dynamic(self, inputs):
-        x = self.flatten(inputs)
         if self.projection == "dot":
             x = tf.multiply(self.direction, x)
 
