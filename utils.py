@@ -43,15 +43,37 @@ def construct_sparse(n1, n2, overscan=1.0):
     return tf.constant(m, dtype="float32")
 
 def dynamic_flatten(train, input_shape):
-    indices, times = train
+    n_b = len(trains)
+    
+    flat_trains = []
 
-    strides = tf.math.cumprod(input_shape, exclusive=True, reverse=True)
-    strides = tf.expand_dims(strides, 1)
+    strides = tf.math.cumprod(model.conv1.output_shape2, exclusive=True, reverse=True)
+    strides = tf.expand_dims(strides, 0)
+    strides = tf.cast(strides, dtype="int64")
+    
+    for b in range(n_b):
+        indices, times = trains[b]
 
-    ravel_index = lambda x: tf.reduce_sum(x * strides, axis=0)
-    indices = tf.map_fn(fn, indices)
+        flat_indices = tf.matmul(strides, indices)
+        flat_indices = tf.reshape(flat_indices, -1)
+        
+        flat_trains.append((flat_indices, times))
 
-    return (indices, times)
+    return flat_trains
+
+def dynamic_unflatten(trains, input_shape):
+    n_b = len(trains)
+    
+    cart_trains = []
+    
+    for b in range(n_b):
+        indices, times = trains[b]
+
+        cart_indices = tf.unravel_index(indices, input_shape)
+        
+        cart_trains.append((cart_indices, times))
+
+    return cart_trains
 
 
 def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
