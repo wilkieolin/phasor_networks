@@ -332,6 +332,9 @@ class Conv2DPhasorModel(keras.Model):
         #define the RPP projection
         if self.projection == "dot":
             self.direction = 2.0 * (tf.cast(tf.random.uniform((1, *self.image_shape)) > 0.5, dtype="float")) - 1.0
+            self.project_fn = lambda x: tf.multiply(self.direction, x)
+        else:
+            self.project_fn = lambda x: x
 
         self.batchnorm = layers.BatchNormalization()
         self.conv1 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv1")
@@ -409,22 +412,25 @@ class Conv2DPhasorModel(keras.Model):
 
 
     def call(self, inputs):
-        if self.projection == "dot":
-            x = tf.multiply(self.direction, inputs)
-        else:
-            x = inputs
-
+        #input layers (real domain)
+        x = self.project_fn(inputs)
         x = self.batchnorm(x)
+
+        #process layers (phasor domain)
+        #conv block 1
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.maxpool1(x)
         x = self.dropout1(x)
 
+        #conv block 2
         x = self.conv3(x)
         x = self.conv4(x)
         x = self.maxpool2(x)
         x = self.dropout2(x)
+        self.conv_output_shape = x.shape[1:]
 
+        #dense layers & output
         x = self.flatten(x)
         x = self.dense1(x)
         x = self.dropout3(x)
@@ -433,17 +439,27 @@ class Conv2DPhasorModel(keras.Model):
         return x
 
     def call_dynamic(self, inputs):
-        if self.projection == "dot":
-            x = tf.multiply(self.direction, x)
-
+        x = project_fn(inputs)
+        x = self.batchnorm(inputs)
         #convert continuous time representations into periodic spike train
         s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
+
+        #conv block 1
         s = self.conv1.call_dynamic(s)
         s = self.conv2.call_dynamic(s)
+        s = dynamic_maxpool(s)
+        s = dynamic_dropout(s)
+
+        #conv block 2
         s = self.conv3.call_dynamic(s)
         s = self.conv4.call_dynamic(s)
-        #TODO - flatten op on train
+        s = dynamic_maxpool(s)
+        s = dynamic_dropout(s)
+        s = dynamic_flatten(s)
+
+        #dense block & output 
         s = self.dense1.call_dynamic(s)
+        s = dynamic_dropout(s)
         s = self.dense2.call_dynamic(s)
         #convert the spikes back to phases
         y = train_to_phase(s, (self.n_classes), depth=1, repeats=self.repeats, period=self.dyn_params["periodd"])

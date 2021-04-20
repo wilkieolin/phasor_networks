@@ -172,13 +172,27 @@ class CmpxConv2D(keras.layers.Layer):
         self.threshold = kwargs.get("threshold", 0.03)
         self.exec_time = kwargs.get("exec_time", 10.0)
         self.max_step = kwargs.get("max_step", 0.01)
+
+    def build(self, input_shape):
+        self.operation.build(input_shape)
+
         
+    def call(self, inputs):
+        pi = tf.constant(np.pi)
         
-    def call(self, inputs, mode="static"):
-        if mode=="dynamic":
-            output = self.call_dynamic(inputs)
-        else:
-            output = self.call_static(inputs)
+
+        #convert the phase angles into complex vectors
+        inputs = phase_to_complex(inputs)
+        #scale the complex vectors by weight and sum
+        real_output = self.operation(tf.math.real(inputs))
+        imag_output = self.operation(tf.math.imag(inputs))
+        output = tf.complex(real_output, imag_output)
+        #convert them back to phase angles
+        output = tf.math.angle(output) / pi
+
+        #this isn't computed automatically via call for some reason
+        self.input_shape2 = inputs.shape[1:]
+        self.output_shape2 = output.shape[1:]
 
         return output
 
@@ -188,7 +202,7 @@ class CmpxConv2D(keras.layers.Layer):
         outputs = []
         n_batches = len(inputs)
 
-        out_shape = self.operation.output_shape[1:]
+        out_shape = self.output_shape2
         n_neurons = np.prod(out_shape)
 
         for i in tqdm(range(n_batches)):
@@ -222,23 +236,13 @@ class CmpxConv2D(keras.layers.Layer):
 
 
     def call_static(self, inputs):
-        pi = tf.constant(np.pi)
-        #convert the phase angles into complex vectors
-        inputs = phase_to_complex(inputs)
-        #scale the complex vectors by weight and sum
-        real_output = self.operation(tf.math.real(inputs))
-        imag_output = self.operation(tf.math.imag(inputs))
-        output = tf.complex(real_output, imag_output)
-        #convert them back to phase angles
-        output = tf.math.angle(output) / pi
-
-        return output
+        return call(input)
 
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes
         window = self.window
         
-        shape = self.image_shape
+        shape = self.input_shape2
         cast = lambda x: tf.cast(x, "float")
         box_start = cast(tf.constant(t - window))
         box_end = cast(tf.constant(t + window))

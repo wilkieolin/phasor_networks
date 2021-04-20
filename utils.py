@@ -42,6 +42,17 @@ def construct_sparse(n1, n2, overscan=1.0):
             
     return tf.constant(m, dtype="float32")
 
+def dynamic_flatten(train, input_shape):
+    indices, times = train
+
+    strides = tf.math.cumprod(input_shape, exclusive=True, reverse=True)
+    strides = tf.expand_dims(strides, 1)
+
+    ravel_index = lambda x: tf.reduce_sum(x * strides, axis=0)
+    indices = tf.map_fn(fn, indices)
+
+    return (indices, times)
+
 
 def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
     refrac_t = period*refractory
@@ -112,25 +123,6 @@ def findspks_max(sol, threshold=0.05, period=1.0):
     all_spks = np.concatenate((all_spks, np.zeros((n_neurons, missing_t))), axis=1)
     return all_spks
 
-# def fold(input, kernel_size, filters):
-#     n_batch = input.shape[0]
-#     n_x, n_y, n_c = input.shape[1:]
-    
-#     kernel_x = kernel_size[0]
-#     kernel_y = kernel_size[1]
-#     n_x2 = (n_x - kernel_x) + 1
-#     n_y2 = (n_y - kernel_y) + 1
-
-#     blocks = []
-#     for i in range(n_x2):
-#         for j in range(n_y2):
-
-#             range_x = i:(i+kernel_x)
-#             range_y = j:(j+kernel_y)
-
-#             kernel_data = 
-
-
 
 def limit_gpus():
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -178,6 +170,7 @@ def phase_to_train(x, shape, period=1.0, repeats=3):
             output.append( (inds, times) )
         
         return output
+
 
 """
 Move phases from (-inf, inf) into (-pi, pi)
