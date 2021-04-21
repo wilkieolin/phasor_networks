@@ -299,7 +299,6 @@ class PhasorModel(keras.Model):
 
         return outputs
 
-
         
 class Conv2DPhasorModel(keras.Model):
     def __init__(self, input_shape, **kwargs):
@@ -313,6 +312,8 @@ class Conv2DPhasorModel(keras.Model):
         self.onehot_phase = kwargs.get("onehot_phase", 0.0)
         self.projection = kwargs.get("projection", "dot")
         self.dropout_rate = kwargs.get("dropout_rate", 0.25)
+        self.pooling = kwargs.get("pooling", "min")
+        self.weight_decay = kwargs.get("weight_decay", 1e-4)
 
         #dynamic parameters
         self.dyn_params = {
@@ -337,15 +338,34 @@ class Conv2DPhasorModel(keras.Model):
             self.project_fn = lambda x: x
 
         self.batchnorm = layers.BatchNormalization()
-        self.conv1 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv1")
-        self.conv2 = CmpxConv2D(32, (3,3), **self.dyn_params, name="conv2")
-        self.maxpool1 = layers.MaxPool2D((2,2))
+        self.conv1 = CmpxConv2D(32, (3,3), **self.dyn_params, weight_decay=self.weight_decay, name="conv1")
+        self.conv2 = CmpxConv2D(32, (3,3), **self.dyn_params, weight_decay=self.weight_decay, name="conv2")
         self.dropout1 = layers.Dropout(self.dropout_rate, name="dropout1")
         
-        self.conv3 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv3")
-        self.conv4 = CmpxConv2D(64, (3,3), **self.dyn_params, name="conv4")
-        self.maxpool2 = layers.MaxPool2D((2,2))
+        self.conv3 = CmpxConv2D(64, (3,3), **self.dyn_params, weight_decay=self.weight_decay, name="conv3")
+        self.conv4 = CmpxConv2D(64, (3,3), **self.dyn_params, weight_decay=self.weight_decay, name="conv4")
         self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
+
+        if self.pooling == "min":
+            #do a minpool / WTA by just inverting a maxpool
+            self.pool_layer1 = layers.MaxPool2D((2,2))
+            self.pool_layer2 = layers.MaxPool2D((2,2))
+
+            self.pool1 = lambda x: -1.0 * self.pool_layer1(-1.0 * x)
+            self.pool2 = lambda x: -1.0 * self.pool_layer2(-1.0 * x)
+
+        elif self.pooling == "max":
+            self.pool1 = layers.MaxPool2D((2,2))
+            self.pool2 = layers.MaxPool2D((2,2))
+
+        elif self.pooling == "mean":
+            self.pool1 = layers.AvgPool2D((2,2))
+            self.pool2 = layers.AvgPool2D((2,2))
+
+        else:
+            self.pool1 = lambda x: x
+            self.pool2 = lambda x: x
+
 
         self.flatten = layers.Flatten()
         self.dense1 = CmpxLinear(self.n_hidden, **self.dyn_params, name="complex1")
@@ -420,15 +440,14 @@ class Conv2DPhasorModel(keras.Model):
         #conv block 1
         x = self.conv1(x)
         x = self.conv2(x)
-        x = self.maxpool1(x)
+        x = self.pool1(x)
         x = self.dropout1(x)
 
         #conv block 2
         x = self.conv3(x)
         x = self.conv4(x)
-        x = self.maxpool2(x)
+        x = self.pool2(x)
         x = self.dropout2(x)
-        self.conv_output_shape = x.shape[1:]
 
         #dense layers & output
         x = self.flatten(x)
@@ -498,6 +517,21 @@ class Conv2DPhasorModel(keras.Model):
 
         return np.array(losses)
 
+    def train_aug(self, loader, batches, report_interval=100):
+        losses = []
+
+        data_iter = iter(loader)
+        for step in range(batches):
+            x, y = next(data_iter)
+
+            loss = self.train_step(x, y)
+            losses.append(loss)
+
+            if step % report_interval == 0:
+                print("Training loss", loss)
+
+        return np.array(losses)
+        
     def predict(self, yh, method="static"):
         if method=="static":
             return self._static_prediction(yh)
@@ -525,12 +559,3 @@ class Conv2DPhasorModel(keras.Model):
 
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         return loss
-
-    """
-    Return the series of phases produced at output for each cycle
-    """
-    def train_to_phase(trains, depth=0):
-        repeats = self.repeats
-
-        return None
-        

@@ -15,6 +15,7 @@ from models import *
 input_shape=(28,28,1)
 n_px = 28**2
 
+### MLP models ###
 def make_standard():
     model = keras.Sequential([layers.Input(input_shape),
                          layers.Flatten(),

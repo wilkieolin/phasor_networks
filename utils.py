@@ -42,38 +42,49 @@ def construct_sparse(n1, n2, overscan=1.0):
             
     return tf.constant(m, dtype="float32")
 
-def dynamic_flatten(train, input_shape):
-    n_b = len(trains)
+def dynamic_dropout(trains, rate):
+    def dropout_lambda(x):
+        indices, times = x
+        if len(indices.shape) == 1:
+            #for flattened index vectors
+            i_gather_axis = 0
+        else:
+            #for cartesian index matrices
+            i_gather_axis = 1
+            
+        n_x = times.shape[0]
+        
+        rand_indices = tf.where(tf.random.uniform((n_x,)) > rate)
+        d_indices = tf.gather(indices, rand_indices, axis=i_gather_axis)
+        d_indices = tf.squeeze(d_indices)
+        
+        d_times = tf.gather(times, rand_indices, axis=0)
+        d_times = tf.squeeze(d_times)
+        
+        return (d_indices, d_times)
     
-    flat_trains = []
+    return list(map(dropout_lambda, trains))
 
-    strides = tf.math.cumprod(model.conv1.output_shape2, exclusive=True, reverse=True)
-    strides = tf.expand_dims(strides, 0)
-    strides = tf.cast(strides, dtype="int64")
+def dynamic_flatten(trains, input_shape):
     
-    for b in range(n_b):
-        indices, times = trains[b]
+    def flatten_lambda(x):
+        strides = tf.math.cumprod(input_shape, exclusive=True, reverse=True)
+        strides = tf.expand_dims(strides, 0)
+        strides = tf.cast(strides, dtype="int64")
+
+        indices = x[0]
 
         flat_indices = tf.matmul(strides, indices)
         flat_indices = tf.reshape(flat_indices, -1)
         
-        flat_trains.append((flat_indices, times))
+        return (indices, x[1])
 
-    return flat_trains
+    return list(map(flatten_lambda, trains))
 
 def dynamic_unflatten(trains, input_shape):
-    n_b = len(trains)
-    
-    cart_trains = []
-    
-    for b in range(n_b):
-        indices, times = trains[b]
+    unflatten_lambda = lambda x: tf.unravel_index(x[0], input_shape)
 
-        cart_indices = tf.unravel_index(indices, input_shape)
-        
-        cart_trains.append((cart_indices, times))
-
-    return cart_trains
+    return list(map(unflatten_lambda, trains))
 
 
 def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):

@@ -5,6 +5,8 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow.keras as keras
 import tensorflow.keras.layers as layers
+from tensorflow.keras import regularizers
+
 from utils import *
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
@@ -156,11 +158,13 @@ class CmpxConv2D(keras.layers.Layer):
         super(CmpxConv2D, self).__init__()
         self.filters = filters
         self.kernel_size = kernel_size
+        self.weight_decay = kwargs.get("weight_decay", 1e-4)
 
         #create the convolutional operation via a sub-layer
         self.operation = layers.Conv2D(self.filters, 
                         kernel_size=self.kernel_size,
-                        use_bias=False)
+                        use_bias=False,
+                        kernel_regularizer=regularizers.l2(self.weight_decay))
         
         #dynamic execution constants
         self.leakage = kwargs.get("leakage", -0.2)
