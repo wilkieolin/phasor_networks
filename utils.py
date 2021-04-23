@@ -85,10 +85,12 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
     assert len(pool_size) == 2, "Must have 2-D pool"
     if method == "relative":
         r_period = kwargs.get("r_period", 0.9)
+        r_lambda = lambda x: refract(x, r_period)
     else:
         period = kwargs.get("period", 1.0)
         depth = kwargs.get("depth", 1)
         offset = period / 4.0 + depth*period
+        r_lambda = lambda x: refract_absolute(x, period, offset)
     
     """
     Given the inputs, generate the input -> output mapping
@@ -124,9 +126,9 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
                             
                     #the group of input indices which are pooled to produce the single output index
                     index_groups.append(np.array(group))
-                    output_indices.append(np.array(x,y,c))
+                    output_indices.append(np.array(((x,y,c),)))
                     
-        kernel_pairs = zip(output_indices, index_groups)
+        kernel_pairs = list(zip(output_indices, index_groups))
                     
         return kernel_pairs, output_shape
     
@@ -134,34 +136,17 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
                             
     #transform an individual spike train by pooling times locally to get the first-firing
     def train_lambda(train):
-        indices, times = train
         
-        #given the indices of a single pool, get the minpool values
-        def pool(pair):
-            output_index, input_inds = pair
-            
-            pool_indices = tf.where(indices == input_inds)
-            pool_times = tf.gather(times, pool_indices)
-            
-            if method == "relative":
-                times = refract(pool_times, r_period)
-            else:
-                times = refract_absolute(times, period, offset)
-                
-            n_t = times.shape[0]
-            #broadcast the output index to the number of spikes
-            indices = tf.repeat(output_index, n_t, axis=0)
-            
-            return (indices, times)
+        pool_lambda = lambda x: pool(x, train, r_lambda)
         
         #collect the min-pooled firing times over all pools
-        output = list(map(pool, index_groups))
+        output = list(map(pool_lambda, index_groups))
         
         output_indices = tf.concat([o[0] for o in output], axis=0)
         output_times = tf.concat([o[1] for o in output], axis=0)
-        #sort by time
-         
         
+        return (output_indices, output_times)
+         
     return list(map(train_lambda, trains))
 
 def dynamic_unflatten(trains, input_shape):
@@ -287,8 +272,34 @@ def phase_to_train(x, shape, period=1.0, repeats=3):
         
         return output
 
+#given the indices of a single pool, get the minpool values
+def pool(pool_mapping, train, refraction):
+    #the indices which the current kernel is collecting from
+    kernel_output_ind, kernel_input_inds = pool_mapping
+    #times and indices from the entire layer
+    train_inds, train_times = train
+
+    #lambda which return where all indices match the input
+    get_matches = lambda x: tf.reduce_all(train_inds == tf.expand_dims(x, 1), axis=0)
+    #map the lambda over all the kernel indices (same as map_fn but works)
+    matches = tf.stack([get_matches(ind) for ind in tf.unstack(kernel_input_inds)])
+    #then reduce_sum to get all matches & their location
+    all_matches = tf.where(tf.reduce_sum(tf.cast(m, dtype="int32"), axis=0))
+    
+    pool_times = tf.squeeze(tf.gather(train_times, all_matches))
+
+    times = refraction(pool_times)
+
+    n_t = times.shape[0]
+    #broadcast the output index to the number of spikes
+    indices = tf.tile(kernel_output_ind, (n_t, 1))
+
+    return (indices, times)
+
 def refract(times, r_period):
     n_s = times.shape[0]
+    #use numpy because TF can be *very* slow at iterated scalar ops
+    times = tf.sort(times, axis=0).numpy()
     
     inds = []
     i = 0
@@ -306,6 +317,8 @@ def refract(times, r_period):
 
 def refract_absolute(times, period, offset):
     n_s = times.shape[0]
+    
+    times = tf.sort(times, axis=0).numpy()
     
     inds = []
     i = 0
