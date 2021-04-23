@@ -204,6 +204,43 @@ def phase_to_train(x, shape, period=1.0, repeats=3):
         
         return output
 
+def refract(times, r_period):
+    n_s = times.shape[0]
+    
+    inds = []
+    i = 0
+    while i < n_s:
+        #add the index of the first spike after the refractory period to the list
+        inds.append(i)
+        t_stop = times[i] + r_period
+        
+        #find the next non-refractory spike
+        while i < n_s and times[i] < t_stop:
+            i += 1
+            
+    refractory_times = tf.gather(times, inds)
+    return refractory_times
+
+def refract_absolute(times, tstart, period):
+    n_s = times.shape[0]
+    
+    inds = []
+    i = 0
+    p = 1
+    
+    while i < n_s:
+        #add the index of the first spike after the refractory period to the list
+        inds.append(i)
+        t_stop = period*p
+        
+        #find the next non-refractory spike
+        while i < n_s and times[i] < t_stop:
+            i += 1
+            
+        p += 1
+            
+    refractory_times = tf.gather(times, inds)
+    return refractory_times
 
 """
 Move phases from (-inf, inf) into (-pi, pi)

@@ -231,6 +231,7 @@ class CmpxConv2D(keras.layers.Layer):
             
             spks = tf.where(spk > 0.0)
             spk_tms = tf.gather(sol.t, spks[:,1])
+            spk_tms = tf.cast(spk_tms, "float")
             spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
             
             outputs.append( (spk_inds, spk_tms) )
