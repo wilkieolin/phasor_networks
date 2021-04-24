@@ -92,47 +92,7 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
         offset = period / 4.0 + depth*period
         r_lambda = lambda x: refract_absolute(x, period, offset)
     
-    """
-    Given the inputs, generate the input -> output mapping
-    """
-    def generate_index_groups():
-        n_x, n_y, n_c = input_shape
-        k_x, k_y = pool_size
-        
-        strides_x = n_x // k_x
-        strides_y = n_y // k_y
-        
-        output_shape = (strides_x, strides_y, n_c)
-        
-        index_groups = []
-        output_indices = []
-        for c in range(n_c):
-            for x in range(strides_x):
-                for y in range(strides_y):
-                    #generate the members bounded by each valid pool
-                    start_x = k_x * x
-                    stop_x = start_x + k_x
-                    x_inds = np.arange(start_x, stop_x)
-                    
-                    start_y = k_y * y
-                    stop_y = start_y + k_y
-                    y_inds = np.arange(start_y, stop_y)
-                    
-                    group = []
-                    for i_x in x_inds:
-                        for i_y in y_inds:
-                            coordinate = np.array([i_x, i_y, c])
-                            group.append(coordinate)
-                            
-                    #the group of input indices which are pooled to produce the single output index
-                    index_groups.append(np.array(group))
-                    output_indices.append(np.array(((x,y,c),)))
-                    
-        kernel_pairs = list(zip(output_indices, index_groups))
-                    
-        return kernel_pairs, output_shape
-    
-    index_groups, output_shape = generate_index_groups()
+    index_groups, output_shape = generate_index_groups(input_shape, pool_size)
                             
     #transform an individual spike train by pooling times locally to get the first-firing
     def train_lambda(train):
@@ -224,6 +184,45 @@ def findspks_max(sol, threshold=0.05, period=1.0):
     all_spks = np.concatenate((all_spks, np.zeros((n_neurons, missing_t))), axis=1)
     return all_spks
 
+"""
+Given the inputs, generate the input -> output mapping
+"""
+def generate_index_groups(input_shape, pool_size):
+    n_x, n_y, n_c = input_shape
+    k_x, k_y = pool_size
+    
+    strides_x = n_x // k_x
+    strides_y = n_y // k_y
+    
+    output_shape = (strides_x, strides_y, n_c)
+    
+    index_groups = []
+    output_indices = []
+    for c in range(n_c):
+        for x in range(strides_x):
+            for y in range(strides_y):
+                #generate the members bounded by each valid pool
+                start_x = k_x * x
+                stop_x = start_x + k_x
+                x_inds = np.arange(start_x, stop_x)
+                
+                start_y = k_y * y
+                stop_y = start_y + k_y
+                y_inds = np.arange(start_y, stop_y)
+                
+                group = []
+                for i_x in x_inds:
+                    for i_y in y_inds:
+                        coordinate = np.array([i_x, i_y, c])
+                        group.append(coordinate)
+                        
+                #the group of input indices which are pooled to produce the single output index
+                index_groups.append(np.array(group))
+                output_indices.append(np.array(((x,y,c),)))
+                
+    kernel_pairs = list(zip(output_indices, index_groups))
+                
+    return kernel_pairs, output_shape
 
 def limit_gpus():
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -280,7 +279,7 @@ def pool(pool_mapping, train, refraction):
     train_inds, train_times = train
 
     #lambda which return where all indices match the input
-    get_matches = lambda x: tf.reduce_all(train_inds == tf.expand_dims(x, 1), axis=0)
+    get_matches = lambda x: tf.reduce_all(train_inds == tf.expand_dims(x, 0), axis=1)
     #map the lambda over all the kernel indices (same as map_fn but works)
     matches = tf.stack([get_matches(ind) for ind in tf.unstack(kernel_input_inds)])
     #then reduce_sum to get all matches & their location
