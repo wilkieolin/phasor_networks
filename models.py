@@ -458,25 +458,31 @@ class Conv2DPhasorModel(keras.Model):
         return x
 
     def call_dynamic(self, inputs):
-        x = project_fn(inputs)
+        assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
+        x = self.project_fn(inputs)
         x = self.batchnorm(inputs)
         #convert continuous time representations into periodic spike train
         s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
 
         #conv block 1
+        print("Dynamic Execution: Conv 1")
         s = self.conv1.call_dynamic(s)
         s = self.conv2.call_dynamic(s)
-        s = dynamic_maxpool(s)
-        s = dynamic_dropout(s)
+        s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size)
+        s = dynamic_dropout(s, self.dropout_rate)
 
         #conv block 2
+        print("Dynamic Execution: Conv 2")
         s = self.conv3.call_dynamic(s)
         s = self.conv4.call_dynamic(s)
-        s = dynamic_maxpool(s)
-        s = dynamic_dropout(s)
-        s = dynamic_flatten(s)
+        s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size)
+        s = dynamic_dropout(s, self.dropout_rate)
+
+        current_shape = self.pool_layer2.compute_output_shape([None, *self.conv4.output_shape2])[1:]
+        s = dynamic_flatten(s, current_shape)
 
         #dense block & output 
+        print("Dynamic Execution: Dense")
         s = self.dense1.call_dynamic(s)
         s = dynamic_dropout(s)
         s = self.dense2.call_dynamic(s)

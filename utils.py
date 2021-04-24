@@ -284,15 +284,20 @@ def pool(pool_mapping, train, refraction):
     #map the lambda over all the kernel indices (same as map_fn but works)
     matches = tf.stack([get_matches(ind) for ind in tf.unstack(kernel_input_inds)])
     #then reduce_sum to get all matches & their location
-    all_matches = tf.where(tf.reduce_sum(tf.cast(m, dtype="int32"), axis=0))
-    
-    pool_times = tf.squeeze(tf.gather(train_times, all_matches))
+    all_matches = tf.where(tf.reduce_sum(tf.cast(matches, dtype="int32"), axis=0))
 
-    times = refraction(pool_times)
+    if len(all_matches > 0):
+        pool_times = tf.squeeze(tf.gather(train_times, all_matches))
 
-    n_t = times.shape[0]
-    #broadcast the output index to the number of spikes
-    indices = tf.tile(kernel_output_ind, (n_t, 1))
+        times = refraction(pool_times)
+
+        n_t = times.shape[0]
+        #broadcast the output index to the number of spikes
+        indices = tf.tile(kernel_output_ind, (n_t, 1))
+    else:
+        empty = lambda: tf.constant([])
+        indices = empty()
+        times = empty()
 
     return (indices, times)
 
