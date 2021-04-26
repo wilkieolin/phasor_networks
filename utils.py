@@ -81,16 +81,11 @@ def dynamic_flatten(trains, input_shape):
 
     return list(map(flatten_lambda, trains))
 
-def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwargs):
+def dynamic_minpool2D(trains, input_shape, pool_size=(2,2), period=1.0, depth=0):
     assert len(pool_size) == 2, "Must have 2-D pool"
-    if method == "relative":
-        r_period = kwargs.get("r_period", 0.9)
-        r_lambda = lambda x: refract(x, r_period)
-    else:
-        period = kwargs.get("period", 1.0)
-        depth = kwargs.get("depth", 1)
-        offset = period / 4.0 * depth
-        r_lambda = lambda x: refract_absolute(x, period, offset)
+
+    offset = period / 4.0 * depth
+    r_lambda = lambda x: refract_absolute(x, period, offset)
     
     index_groups, output_shape = generate_index_groups(input_shape, pool_size)
                             
