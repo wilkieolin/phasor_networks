@@ -89,7 +89,7 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
     else:
         period = kwargs.get("period", 1.0)
         depth = kwargs.get("depth", 1)
-        offset = period / 4.0 + depth*period
+        offset = period / 4.0 * depth
         r_lambda = lambda x: refract_absolute(x, period, offset)
     
     index_groups, output_shape = generate_index_groups(input_shape, pool_size)
@@ -102,7 +102,7 @@ def dynamic_minpool2D(trains, input_shape, pool_size, method="relative", **kwarg
         #collect the min-pooled firing times over all pools
         output = list(map(pool_lambda, index_groups))
         
-        output_indices = tf.concat([o[0] for o in output], axis=0)
+        output_indices = tf.concat([o[0] for o in output], axis=1)
         output_times = tf.concat([o[1] for o in output], axis=0)
         
         return (output_indices, output_times)
@@ -279,11 +279,12 @@ def pool(pool_mapping, train, refraction):
     train_inds, train_times = train
 
     #lambda which return where all indices match the input
-    get_matches = lambda x: tf.reduce_all(train_inds == tf.expand_dims(x, 0), axis=1)
+    get_matches = lambda x: tf.reduce_all(train_inds == tf.expand_dims(x, 1), axis=0)
     #map the lambda over all the kernel indices (same as map_fn but works)
     matches = tf.stack([get_matches(ind) for ind in tf.unstack(kernel_input_inds)])
+    
     #then reduce_sum to get all matches & their location
-    all_matches = tf.where(tf.reduce_sum(tf.cast(matches, dtype="int32"), axis=0))
+    all_matches = tf.where(tf.reduce_any(matches, axis=0))
 
     if len(all_matches > 0):
         pool_times = tf.squeeze(tf.gather(train_times, all_matches))
@@ -293,6 +294,7 @@ def pool(pool_mapping, train, refraction):
         n_t = times.shape[0]
         #broadcast the output index to the number of spikes
         indices = tf.tile(kernel_output_ind, (n_t, 1))
+        indices = tf.transpose(indices, (1,0))
     else:
         empty = lambda: tf.constant([])
         indices = empty()
@@ -322,22 +324,18 @@ def refract(times, r_period):
 def refract_absolute(times, period, offset):
     n_s = times.shape[0]
     
-    times = tf.sort(times, axis=0).numpy()
+    times = tf.sort(times, axis=0)
+    periods = (times - offset) // period
     
+    last_period = -1
     inds = []
-    i = 0
-    p = 1
     
-    while i < n_s:
-        #add the index of the first spike after the refractory period to the list
-        inds.append(i)
-        t_stop = period*p + offset
-        
-        #find the next non-refractory spike
-        while i < n_s and times[i] < t_stop:
-            i += 1
-            
-        p += 1
+    for i in range(n_s):
+        #get the period of the current spike
+        current_period = periods[i]
+        if current_period > last_period:
+            inds.append(i)
+            last_period += 1
             
     refractory_times = tf.gather(times, inds)
     return refractory_times
@@ -414,7 +412,7 @@ def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
         #assuming eigenfrenquency is same as 1/period
         offset = period/4.0
         #compensate for the delay in turning current into voltage & moving deeper in layers
-        offset = (depth+1)*offset
+        offset = depth*offset
         
         for j in range(repeats):
             #find the start and stop of the period for this cycle
