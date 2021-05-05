@@ -141,17 +141,18 @@ class CmpxLinear(keras.layers.Layer):
 
 
     def call_static(self, inputs):
+        self.input_shape2 = inputs.shape[1:]
+
         pi = tf.constant(np.pi)
         #clip inputs to -1, 1 domain (pi-normalized phasor)
-        inputs = tf.clip_by_value(inputs, -1, 1)
+        x = tf.clip_by_value(inputs, -1, 1)
         #convert the phase angles into complex vectors
-        inputs = phase_to_complex(inputs)
+        x = phase_to_complex(x)
         #scale the complex vectors by weight and sum
-        inputs = tf.matmul(inputs, tf.complex(self.w, tf.zeros_like(self.w)))
+        x = tf.matmul(x, tf.complex(self.w, tf.zeros_like(self.w)))
         #convert them back to phase angles
-        output = tf.math.angle(inputs) / pi
+        output = tf.math.angle(x) / pi
 
-        self.input_shape2 = inputs.shape[1:]
         self.output_shape2 = output.shape[1:]
 
         return output

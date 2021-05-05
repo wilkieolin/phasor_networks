@@ -68,16 +68,10 @@ def dynamic_dropout(trains, rate):
 def dynamic_flatten(trains, input_shape):
     
     def flatten_lambda(x):
-        strides = tf.math.cumprod(input_shape, exclusive=True, reverse=True)
-        strides = tf.expand_dims(strides, 0)
-        strides = tf.cast(strides, dtype="int64")
-
-        indices = x[0]
-
-        flat_indices = tf.matmul(strides, indices)
-        flat_indices = tf.reshape(flat_indices, -1)
+        indices, times = x
+        flat_indices = ravel_index(x, input_shape)
         
-        return (flat_indices, x[1])
+        return (flat_indices, times)
 
     return list(map(flatten_lambda, trains))
 
@@ -297,6 +291,17 @@ def pool(pool_mapping, train, refraction):
 
     return (indices, times)
 
+def ravel_index(indices, shape):
+
+    strides = tf.math.cumprod(shape, exclusive=True, reverse=True)
+    strides = tf.expand_dims(strides, 0)
+    strides = tf.cast(strides, dtype="int64")
+
+    flat_indices = tf.matmul(strides, indices)
+    flat_indices = tf.reshape(flat_indices, -1)
+    
+    return flat_indices
+
 def refract(times, r_period):
     n_s = times.shape[0]
     #use numpy because TF can be *very* slow at iterated scalar ops
@@ -399,15 +404,14 @@ def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
     n_b = len(trains)
 
     outputs = []
+    #assuming eigenfrenquency is same as 1/period
+    offset = period/4.0
+    #compensate for the delay in turning current into voltage & moving deeper in layers
+    offset = depth*offset
+    
     for i in range(n_b):
         out_i, out_t = trains[i]
         all_phases = np.nan * np.zeros((repeats, *shape), "float")
-        #all_phases = []
-        
-        #assuming eigenfrenquency is same as 1/period
-        offset = period/4.0
-        #compensate for the delay in turning current into voltage & moving deeper in layers
-        offset = depth*offset
         
         for j in range(repeats):
             #find the start and stop of the period for this cycle
@@ -415,8 +419,6 @@ def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
             halfcycle = period/2.0
             tstart = tcenter - halfcycle
             tstop =  tcenter + halfcycle
-            #print(str(tstart) + " " + str(tstop))
-
 
             #grab the corresponding indices and values from the solution
             cast = lambda x: tf.cast(x, "float")
@@ -428,14 +430,16 @@ def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
             phases = 2.0 * phases - 1.0
             phases = tf.reshape(phases, -1).numpy()
             
-            indices = tf.gather(out_i, inds, axis=1)[:,:,0]
-            
-            for k in range(indices.shape[1]):
-                ind = indices[:,k].numpy()
-                all_phases[j, ind[0], ind[1], ind[2]] = phases[k]
-                
-            #all_phases.append(tf.scatter_nd(tf.transpose(indices), phases, shape=shape))
-            
+            if len(shape) == 3:
+                #for convolutional layers
+                indices = tf.gather(out_i, inds, axis=1)[:,:,0]
+                #return indices
+                indices = np.ravel_multi_index(indices, dims=shape)
+                np.put(all_phases[j,...], indices, phases)
+            else:
+                #for dense layers
+                indices = tf.gather(out_i, inds, axis=0)[:,0]
+                np.put(all_phases[j,...], indices, phases)
 
         outputs.append(tf.stack(all_phases, axis=0))
 
