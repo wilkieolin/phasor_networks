@@ -69,19 +69,32 @@ class CmpxLinear(keras.layers.Layer):
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes
         window = self.window
-        neurons = self.n_in
-        currents = np.zeros((neurons), dtype="float")
+        
+        shape = self.input_shape2
+        cast = lambda x: tf.cast(x, "float")
+        box_start = cast(tf.constant(t - window))
+        box_end = cast(tf.constant(t + window))
 
-        box_start = t - window
-        box_end = t + window
-        active = (spikes_t > box_start) * (spikes_t < box_end)
-        active_i = np.unique(spikes_i[active])
-        for i in active_i:
-            currents[i] += 1.0
+        #determine which spikes at this time are active
+        pre = cast(spikes_t < box_end)
+        post = cast(spikes_t > box_start)
+        active_i = tf.where(pre * post)[:,0]
 
-        currents = tf.constant(currents, dtype="float")
-        currents = tf.reshape(currents, (1,-1))
-        return currents
+        #get the indices of the neurons those active times correspond to
+        active_i = tf.gather(spikes_i, active_i, axis=0)
+        active_i = tf.cast(active_i, "int64")
+        
+        n_active = active_i.shape[0]
+        
+        if n_active > 0:
+            active_i = tf.expand_dims(active_i, 1)
+            updates = tf.ones(n_active)
+            currents = tf.scatter_nd(active_i, updates, shape=shape)
+        else:
+            currents = tf.zeros(shape, dtype="float")
+        
+        #make it 2D for the matrix multiply
+        return tf.expand_dims(currents, 0)
 
     def dz(self, t, z, current):
         k = tf.complex(self.leakage, self.ang_freq)
@@ -137,6 +150,9 @@ class CmpxLinear(keras.layers.Layer):
         inputs = tf.matmul(inputs, tf.complex(self.w, tf.zeros_like(self.w)))
         #convert them back to phase angles
         output = tf.math.angle(inputs) / pi
+
+        self.input_shape2 = inputs.shape[1:]
+        self.output_shape2 = output.shape[1:]
 
         return output
 

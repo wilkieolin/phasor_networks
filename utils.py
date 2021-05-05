@@ -77,7 +77,7 @@ def dynamic_flatten(trains, input_shape):
         flat_indices = tf.matmul(strides, indices)
         flat_indices = tf.reshape(flat_indices, -1)
         
-        return (indices, x[1])
+        return (flat_indices, x[1])
 
     return list(map(flatten_lambda, trains))
 
@@ -101,7 +101,7 @@ def dynamic_minpool2D(trains, input_shape, pool_size=(2,2), period=1.0, depth=0)
         output_times = tf.concat([o[1] for o in output], axis=0)
         
         return (output_indices, output_times)
-         
+
     return list(map(train_lambda, trains))
 
 def dynamic_unflatten(trains, input_shape):
