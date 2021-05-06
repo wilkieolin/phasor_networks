@@ -372,16 +372,17 @@ class Conv2DPhasorModel(keras.Model):
         self.dropout3 = layers.Dropout(self.dropout_rate, name="dropout3")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
 
-    def _mean_prediction(self, yh):
-        #take the average across phases
-        yh_avg = np.nanmean(yh, axis=1)
-        yh_i = np.argmin(np.abs(yh_avg - self.onehot_phase), axis=1)
+    def _predict_last(self, phases):
+        yh_i = self._predict_ind(self, phases, ind=-2)
+    
         return yh_i
 
-    def _mode_prediction(self, yh):
-        yh_i = np.argmin(np.abs(yh - self.onehot_phase), axis=2)
-        yh_i = mode(yh_i, axis=1)[0]
-        return yh_i.ravel()
+    def _predict_ind(self, phases, ind=-2):
+        last_phases = phases[:,ind,:]
+        dists = np.abs(last_phases - self.onehot_phase)
+        yh_i = np.argmin(dists, axis=1)
+    
+        return yh_i
 
     def _static_prediction(self, yh):
         yh_i = tf.argmin(tf.math.abs(yh - self.onehot_phase), axis=1)
@@ -487,7 +488,7 @@ class Conv2DPhasorModel(keras.Model):
         #s = dynamic_dropout(s, self.dropout_rate)
         s = self.dense2.call_dynamic(s)
         #convert the spikes back to phases
-        y = train_to_phase(s, (self.n_classes), depth=1, repeats=self.repeats, period=self.dyn_params["periodd"])
+        y = train_to_phase(s, self.dense2.output_shape2, depth=6, repeats=self.repeats, period=self.dyn_params["period"])
 
         return np.stack(y, axis=0)
 
@@ -542,8 +543,8 @@ class Conv2DPhasorModel(keras.Model):
         if method=="static":
             return self._static_prediction(yh)
 
-        elif method=="dynamic_mode":
-            return self._mode_prediction(yh)
+        elif method=="dynamic":
+            return self._predict_last(yh)
 
         else:
             return self._mean_prediction(yh)
