@@ -69,7 +69,7 @@ def dynamic_flatten(trains, input_shape):
     
     def flatten_lambda(x):
         indices, times = x
-        flat_indices = ravel_index(x, input_shape)
+        flat_indices = ravel_index(indices, input_shape)
         
         return (flat_indices, times)
 
