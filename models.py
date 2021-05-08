@@ -373,7 +373,7 @@ class Conv2DPhasorModel(keras.Model):
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
 
     def _predict_last(self, phases):
-        yh_i = self._predict_ind(self, phases, ind=-2)
+        yh_i = self._predict_ind(phases, ind=-2)
     
         return yh_i
 
@@ -461,7 +461,7 @@ class Conv2DPhasorModel(keras.Model):
     def call_dynamic(self, inputs):
         assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
         x = self.project_fn(inputs)
-        x = self.batchnorm(inputs)
+        x = self.batchnorm(x)
         #convert continuous time representations into periodic spike train
         s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
 
