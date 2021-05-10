@@ -245,8 +245,8 @@ class CmpxConv2D(keras.layers.Layer):
             else:
                 print("WARNING: Spike mode not recognized, defaulting to gradient")
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
-            
-            spks = tf.where(spk > 0.0)
+                        
+            spks = tf.where(spk)
             spk_tms = tf.gather(sol.t, spks[:,1])
             spk_tms = tf.cast(spk_tms, "float")
             spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)

@@ -121,22 +121,8 @@ def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
     #filter by threshold
     above_t = voltage > threshold
     spks = spks * above_t
-    
-    #apply the refractory period
-    if refractory > 0.0:
-        for t in range(n_t):
-            #current time + refractory window
-            stop = ts[t] + refrac_t
-            if stop > tmax:
-                stop_i = -1
-            else:
-                #find the first index where t > stop
-                stop_i = np.nonzero(ts > stop)[0][0]
-            
-            for n in range(n_n):
-                #if there's a spike
-                if spks[n,t] == True:
-                    spks[n,t+1:stop_i] = False
+
+    spks = raster_refract(spks, sol.t, refractory)
 
     return spks
 
@@ -302,6 +288,36 @@ def ravel_index(indices, shape):
     
     return flat_indices
 
+@tf.function
+def raster_refract(spike_raster, times, r_period):
+    def refract_channel(vec, times, r_period):
+        #keep indices where a spike happens outside the last one's refractory period
+        spks = tf.where(vec).numpy()
+        
+        if len(spks) > 0:
+            inds = []
+            #simulations start at 0 time
+            t_last = -100.0
+
+            for spk in spks:
+                t_current = times[spk]
+                if times[spk] > t_last + r_period:
+                    inds.append(spk)
+                    t_last = t_current
+
+            inds = tf.constant(inds, dtype="int64")
+            r_spikes = tf.scatter_nd(inds, tf.ones_like(inds, dtype="bool"), (vec.shape[0],1))
+            r_spikes = tf.transpose(r_spikes, (1,0))
+            
+        else:
+            r_spikes = tf.zeros_like(vec)
+            r_spikes = tf.expand_dims(vec, 0)
+
+        return tf.squeeze(r_spikes)
+
+    return tf.map_fn(lambda x: refract_channel(x, times, r_period), spike_raster)
+
+
 def refract(times, r_period):
     n_s = times.shape[0]
     #use numpy because TF can be *very* slow at iterated scalar ops
@@ -388,8 +404,11 @@ def split_by_period(sol, dtype="v", period=1.0):
 Restrict visible GPUs since TF is a little greedy
 """
 def set_gpu(idx):
-    physical_devices = tf.config.list_physical_devices('GPU')
-    tf.config.set_visible_devices(physical_devices[idx], 'GPU')
+    if idx == None:
+        tf.config.set_visible_devices([], 'GPU')
+    else:
+        physical_devices = tf.config.list_physical_devices('GPU')
+        tf.config.set_visible_devices(physical_devices[idx], 'GPU')
 
 """
 Return the similarity of two phase vectors defined by the FHNN framework
@@ -399,6 +418,15 @@ def similarity(x, y):
     assert x.shape == y.shape, "Function is for comparing similarity of tensors with identical shapes and 1:1 mapping: " + str(x.shape) + " " + str(y.shape)
     pi = tf.constant(np.pi)
     return tf.math.reduce_mean(tf.math.cos(pi*(x - y)), axis=1)
+
+def raster_to_train(spike_raster):
+    spks = tf.where(spike_raster > 0.0)
+
+    spk_tms = tf.gather(sol.t, spks[:,1])
+    spk_tms = tf.cast(spk_tms, "float")
+    spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
+
+    return (spk_inds, spk_tms)
 
 def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
     n_b = len(trains)
