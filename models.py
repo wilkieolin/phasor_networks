@@ -469,14 +469,14 @@ class Conv2DPhasorModel(keras.Model):
         print("Dynamic Execution: Conv 1")
         s = self.conv1.call_dynamic(s)
         s = self.conv2.call_dynamic(s)
-        s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size)
+        s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size, depth=2)
         #s = dynamic_dropout(s, self.dropout_rate)
 
         #conv block 2
         print("Dynamic Execution: Conv 2")
         s = self.conv3.call_dynamic(s)
         s = self.conv4.call_dynamic(s)
-        s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size)
+        s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size, depth=4)
         #s = dynamic_dropout(s, self.dropout_rate)
 
         current_shape = self.pool_layer2.compute_output_shape([None, *self.conv4.output_shape2])[1:]
