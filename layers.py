@@ -107,7 +107,7 @@ class CmpxLinear(keras.layers.Layer):
         return dz.numpy()
 
     #currently inference only
-    def call_dynamic(self, inputs):
+    def call_dynamic(self, inputs, save_solutions=False):
         solutions = []
         outputs = []
         n_batches = len(inputs)
@@ -120,7 +120,8 @@ class CmpxLinear(keras.layers.Layer):
             i_fn = lambda t: self.current(t, (input_i, input_t))
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
-            solutions.append(sol)
+            if save_solutions:
+                solutions.append(sol)
 
             if self.spk_mode == "gradient":
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
@@ -197,11 +198,9 @@ class CmpxConv2D(keras.layers.Layer):
     def build(self, input_shape):
         self.operation.build(input_shape)
 
-        
     def call(self, inputs):
         pi = tf.constant(np.pi)
         
-
         #convert the phase angles into complex vectors
         inputs = phase_to_complex(inputs)
         #scale the complex vectors by weight and sum
@@ -256,10 +255,6 @@ class CmpxConv2D(keras.layers.Layer):
         self.solutions = solutions
         self.spike_trains = outputs
         return outputs
-
-
-    def call_static(self, inputs):
-        return call(input)
 
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes

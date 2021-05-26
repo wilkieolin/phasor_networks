@@ -75,6 +75,38 @@ def test_standard(constructor, ds_train, ds_test, n_trials=10, n_epochs=2, n_bat
         
     return np.array(accs)
 
+input_shape_cifar = (32,32,3)
+n_px_cifar = (32*32*3)
+
+def make_conv2D(weight_decay=1e-4, dropout_rate=0.25, n_hidden=1000):
+    wdr=regularizers.l2(weight_decay)
+
+    model = keras.Sequential([layers.Input(input_shape_cifar),
+                            layers.BatchNormalization(),
+
+                            layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv1", activation="relu"),
+                            layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv2", activation="relu"),
+                            layers.MaxPool2D((2,2), name="maxpool1"),
+                            layers.Dropout(dropout_rate, name="dropout1"),
+
+                            layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv3", activation="relu"),
+                            layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv4", activation="relu"),
+                            layers.MaxPool2D((2,2), name="maxpool2"),
+                            layers.Dropout(dropout_rate, name="dropout2"),
+
+                            layers.Flatten(name="flatten"),
+                            layers.Dense(n_hidden, name="dense1", activation="relu"),
+                            layers.Dropout(dropout_rate, name="dropout3"),
+                            layers.Dense(10, name="dense2", activation="softmax"),
+
+                            ])
+
+    model.compile(optimizer="rmsprop", 
+              loss=keras.losses.SparseCategoricalCrossentropy(), 
+              metrics=[keras.metrics.SparseCategoricalAccuracy()])
+    
+    return model
+
 """
 ############# Phasor models #################
 """
