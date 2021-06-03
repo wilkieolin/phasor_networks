@@ -138,28 +138,6 @@ def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
                     spks[n,t+1:stop_i] = False
 
     return spks
-    
-# def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
-#     refrac_t = period*refractory
-#     ts = sol.t
-#     tmax = ts[-1]
-#     zs = sol.y
-#     n_t = sol.t.shape[0]
-#     n_n = sol.y.shape[0]
-    
-#     #find where voltage reaches its max
-#     voltage = np.imag(zs)
-#     dvs = np.gradient(voltage, axis=1)
-#     dsign = np.sign(dvs)
-#     spks = np.diff(dsign, axis=1, prepend=np.zeros_like((zs.shape[1]))) < 0
-    
-#     #filter by threshold
-#     above_t = voltage > threshold
-#     spks = spks * above_t
-
-#     spks = raster_refract(spks, sol.t, refractory)
-
-#     return spks
 
 def findspks_max(sol, threshold=0.05, period=1.0):
     all_spks = []

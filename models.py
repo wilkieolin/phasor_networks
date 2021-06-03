@@ -1,3 +1,12 @@
+"""
+This file contains the models used for deep phasor network experiments. 
+These models define (1) the small MLP model used for MNIST-format tasks,
+and (2) the larger model used on the CIFAR test set. 
+
+Wilkie Olin-Ammentorp, 2021
+University of Califonia, San Diego
+"""
+
 import numpy as np
 
 import tensorflow as tf
@@ -13,24 +22,16 @@ from utils import *
 from scipy.stats import mode
 
 """
-Converts a vector of features from a detector (e.g. convolutional net, ResNet) and projects/
-normalizes them into a VSA symbol.
+Converts a vector of features from a real-valued input, and projects/normalizes them into a VSA symbol.
 """
 class VSA_Encoder(keras.Model):
     def __init__(self, n_in, n_out, overscan=1.0, sigma=3.0, name='VSA Encoder'):
         super(VSA_Encoder, self).__init__()
-        #self.norm_features = SBatchNorm(n_in, 1.0)
         self.transform = StaticLinear(n_in, n_out, overscan)
         self.norm_symbols = Normalize(sigma)
 
-        # self.inv_transform = keras.Sequential([
-        #     keras.layers.Input(n_out),
-        #     keras.layers.Dropout(0.5),
-        #     keras.layers.Dense(n_in)
-        # ])
         
     def call(self, inputs, **kwargs):
-        #x = self.norm_features(inputs, **kwargs)
         x = self.transform(inputs)
         x = self.norm_symbols(x, **kwargs)
         x = tf.clip_by_value(x, -1.0, 1.0)
@@ -39,40 +40,55 @@ class VSA_Encoder(keras.Model):
     def reverse(self, inputs):
         x = self.norm_symbols.reverse(inputs)
         x = self.transform.reverse(x)
-        #x = self.norm_features.reverse(x)
         
-
         return x    
 
+"""
+Simple multi-layer perceptron model using the phasor basis of activation.
+"""
 class PhasorModel(keras.Model):
     def __init__(self, input_shape, **kwargs):
         super(PhasorModel, self).__init__()
         #static parameters
-        self.overscan = kwargs.get("overscan", 100)
-        self.sigma = kwargs.get("sigma", 3.0)
+        #number of neurons in the hidden layer
         self.n_hidden = kwargs.get("n_hidden", 100)
         self.n_classes = kwargs.get("n_classes", 10)
-        self.onehot_offset = kwargs.get("onehot_offset", -0.5)
-        self.onehot_phase = kwargs.get("onehot_phase", 1.0)
+        #the 'DC' offset for all output neurons phase
+        self.onehot_offset = kwargs.get("onehot_offset", 0.0)
+        #the offset the active class will be pushed to (quadrature by default)
+        self.onehot_phase = kwargs.get("onehot_phase", 0.5)
+        #the projection to use for real / phasor conversion at the front-end
         self.projection = kwargs.get("projection", "dot")
+        #the dropout rate between layers for training
         self.dropout_rate = kwargs.get("dropout_rate", 0.25)
 
         #dynamic parameters
         self.dyn_params = {
+            #how fast potentials in the R&F neuron will decay (negative values cause decay)
             "leakage" : kwargs.get("leakage", -0.2),
+            #the eigenperiod for the R&F neuron
             "period" : kwargs.get("period", 1.0),
+            #the width of the box current produced by a spike
             "window" : kwargs.get("window", 0.05),
+            #spike detection mode (gradient based or absolute within a period)
             "spk_mode" : kwargs.get("spk_mode", "gradient"),
+            #imaginary (voltage) threshold of the R&F neuron
             "threshold" : kwargs.get("threshold", 0.03),
+            #how long the dynamic network will be executed for
             "exec_time" : kwargs.get("exec_time", 10.0),
+            #maximum dt for the differential solver
             "max_step" : kwargs.get("max_step", 0.02)
         }
+        #how many cycles of spikes will be presented as a dynamic input
         self.repeats = kwargs.get("repeats", 10)
 
         n_feat = tf.reduce_prod(input_shape).numpy().astype('int')
 
         self.flatten = layers.Flatten(name="flatten")
         if self.projection == "NP":
+            #overscan controls the sparsity of the random projection; lower is sparser
+            self.overscan = kwargs.get("overscan", 100)
+            self.sigma = kwargs.get("sigma", 3.0)
             self.image_encoder = VSA_Encoder(n_feat, n_feat, overscan=self.overscan, sigma=self.sigma)
         elif self.projection == "dot":
             self.direction = 2.0 * (tf.cast(tf.random.uniform((1, n_feat)) > 0.5, dtype="float")) - 1.0
@@ -81,22 +97,34 @@ class PhasorModel(keras.Model):
         self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2")
 
+    """
+    Make a prediction of class by averaging across all the output cycles
+    """
     def _mean_prediction(self, yh):
         #take the average across phases
         yh_avg = np.nanmean(yh, axis=1)
         yh_i = np.argmin(np.abs(yh_avg - self.onehot_phase), axis=1)
         return yh_i
 
+    """
+    Make a prediction of class by taking the mode of the output cycles
+    """
     def _mode_prediction(self, yh):
         yh_i = np.argmin(np.abs(yh - self.onehot_phase), axis=2)
         yh_i = mode(yh_i, axis=1)[0]
         return yh_i.ravel()
 
+    """
+    Make a prediction of class using static execution (only 1 output to consider)
+    """
     def _static_prediction(self, yh):
         yh_i = tf.argmin(tf.math.abs(yh - self.onehot_phase), axis=1)
         return yh_i
 
-
+    """
+    Measure the accuracy of the network on a test set using either exeuction method.
+    Optionally produces a confusion matrix and similarity matrix. 
+    """
     def accuracy(self, loader, confusion=True,  similarity=False, method="static"):
         guesses = np.zeros((self.n_classes, self.n_classes), dtype=np.int)
 
@@ -139,6 +167,9 @@ class PhasorModel(keras.Model):
 
         return tuple(rvals)
 
+    """
+    Standard call method for static (atemporal) network execution. 
+    """
     def call(self, inputs):
         x = self.flatten(inputs)
         if self.projection == "NP":
@@ -152,6 +183,9 @@ class PhasorModel(keras.Model):
 
         return x
 
+    """
+    Call method for dynamic (temporal) network execution using R&F neurons.
+    """
     def call_dynamic(self, inputs):
         x = self.flatten(inputs)
         if self.projection == "NP":
@@ -167,6 +201,9 @@ class PhasorModel(keras.Model):
 
         return np.stack(y, axis=0)
 
+    """
+    Given a dataset, produce the network's output phases with either static or dynamic execution.
+    """
     def evaluate(self, loader, method="static"):
         outputs = []
 
@@ -184,6 +221,9 @@ class PhasorModel(keras.Model):
 
         return tf.concat(outputs, axis=0)
 
+    """
+    Given a training set, train the network using standard gradient descent over a number of epochs with static execution.
+    """
     def train(self, loader, epochs, report_interval=100):
         losses = []
 
@@ -231,6 +271,9 @@ class PhasorModel(keras.Model):
         
         return output
 
+    """
+    Given a series of output phases, produce the predicted class from these outputs. 
+    """
     def predict(self, yh, method="static"):
         if method=="static":
             return self._static_prediction(yh)
@@ -242,10 +285,16 @@ class PhasorModel(keras.Model):
             return self._mean_prediction(yh)
 
 
+    """
+    Given a vector of int-based classes, convert these values to a vector of phases.
+    """
     def to_phase(self, y):
         onehot = lambda x: be.one_hot(x, self.n_classes)
         return onehot(y) * self.onehot_phase + self.onehot_offset
 
+    """
+    Given a batch of example inputs and outputs, carry out a single step of training.
+    """
     def train_step(self, x, y):
         y_phase = self.to_phase(y)
 
@@ -283,8 +332,6 @@ class PhasorModel(keras.Model):
                 halfcycle = period/2.0
                 tstart = tcenter - halfcycle
                 tstop =  tcenter + halfcycle
-                #print(str(tstart) + " " + str(tstop))
-                
                 
                 #grab the corresponding indices and values from the solution
                 inds = (out_t > tstart) * (out_t < tstop)
@@ -299,42 +346,60 @@ class PhasorModel(keras.Model):
 
         return outputs
 
-        
+"""
+More modern convolutional architecture which has 4 blocks (input, conv1, conv2, dense) which is used to classify
+the CIFAR-10 dataset. 
+"""
 class Conv2DPhasorModel(keras.Model):
     def __init__(self, input_shape, **kwargs):
         super(Conv2DPhasorModel, self).__init__()
         #static parameters
-        self.overscan = kwargs.get("overscan", 100)
-        self.sigma = kwargs.get("sigma", 3.0)
+        #number of neurons in the first dense layer in the last block
         self.n_hidden = kwargs.get("n_hidden", 1000)
+        #number of classes in the dataset
         self.n_classes = kwargs.get("n_classes", 10)
-        self.onehot_offset = kwargs.get("onehot_offset", 0.5)
-        self.onehot_phase = kwargs.get("onehot_phase", 0.0)
+        #the 'DC' offset for all output neurons phase
+        self.onehot_offset = kwargs.get("onehot_offset", 0.0)
+        #the offset the active class will be pushed to (quadrature by default)
+        self.onehot_phase = kwargs.get("onehot_phase", 0.5)
+        #projection used at the front end - random projection not yet implemented here
         self.projection = kwargs.get("projection", "dot")
+        #dropout rate used at the end of each block & in the dense block
         self.dropout_rate = kwargs.get("dropout_rate", 0.25)
+        #pooling method to use: min, mean, max, or none
         self.pooling = kwargs.get("pooling", "min")
+        #L2 regularization to apply to convolutional kernel weights
         self.weight_decay = kwargs.get("weight_decay", 1e-4)
 
         #dynamic parameters
         self.dyn_params = {
+            #how fast potentials in the R&F neuron will decay (negative values cause decay)
             "leakage" : kwargs.get("leakage", -0.2),
+            #the eigenperiod for the R&F neuron
             "period" : kwargs.get("period", 1.0),
+            #the width of the box current produced by a spike
             "window" : kwargs.get("window", 0.05),
+            #spike detection mode (gradient based or absolute within a period)
             "spk_mode" : kwargs.get("spk_mode", "gradient"),
+            #imaginary (voltage) threshold of the R&F neuron
             "threshold" : kwargs.get("threshold", 0.03),
+            #how long the dynamic network will be executed for
             "exec_time" : kwargs.get("exec_time", 10.0),
+            #maximum dt for the differential solver
             "max_step" : kwargs.get("max_step", 0.02)
         }
+        #how many cycles of spikes will be presented as a dynamic input
         self.repeats = kwargs.get("repeats", 10)
 
         self.image_shape = input_shape
         self.n_feat = tf.reduce_prod(self.image_shape).numpy().astype('int')
 
-        #define the RPP projection
         if self.projection == "dot":
+            #define the RPP projection
             self.direction = 2.0 * (tf.cast(tf.random.uniform((1, *self.image_shape)) > 0.5, dtype="float")) - 1.0
             self.project_fn = lambda x: tf.multiply(self.direction, x)
         else:
+            #no projection
             self.project_fn = lambda x: x
 
         self.batchnorm = layers.BatchNormalization()
@@ -372,11 +437,17 @@ class Conv2DPhasorModel(keras.Model):
         self.dropout3 = layers.Dropout(self.dropout_rate, name="dropout3")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2") 
 
+    """
+    Predict the output class using the last full cycle of phases in a dynamic execution
+    """
     def _predict_last(self, phases):
         yh_i = self._predict_ind(phases, ind=-2)
     
         return yh_i
 
+    """
+    Predict the output class given a single set of output phases during a single dynamic cycle
+    """
     def _predict_ind(self, phases, ind=-2):
         last_phases = phases[:,ind,:]
         dists = np.abs(last_phases - self.onehot_phase)
@@ -384,11 +455,18 @@ class Conv2DPhasorModel(keras.Model):
     
         return yh_i
 
+    """
+    Predict the output class for a single vector of phases produced from static execution
+    """
     def _static_prediction(self, yh):
         yh_i = tf.argmin(tf.math.abs(yh - self.onehot_phase), axis=1)
         return yh_i
 
 
+    """
+    Measure the accuracy of the network on a test set using either exeuction method.
+    Optionally produces a confusion matrix and similarity matrix. 
+    """
     def accuracy(self, loader, confusion=True,  similarity=False, method="static"):
         guesses = np.zeros((self.n_classes, self.n_classes), dtype=np.int)
 
@@ -431,7 +509,9 @@ class Conv2DPhasorModel(keras.Model):
 
         return tuple(rvals)
 
-
+    """
+    Standard call method for static (atemporal) network execution. 
+    """
     def call(self, inputs):
         #input layers (real domain)
         x = self.project_fn(inputs)
@@ -458,6 +538,9 @@ class Conv2DPhasorModel(keras.Model):
 
         return x
 
+    """
+    Call method for dynamic (temporal) network execution using R&F neurons.
+    """
     def call_dynamic(self, inputs):
         assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
         x = self.project_fn(inputs)
@@ -492,6 +575,9 @@ class Conv2DPhasorModel(keras.Model):
 
         return np.stack(y, axis=0)
 
+    """
+    Given a dataset, produce the network's output phases with either static or dynamic execution.
+    """
     def evaluate(self, loader, method="static"):
         outputs = []
 
@@ -509,6 +595,9 @@ class Conv2DPhasorModel(keras.Model):
 
         return tf.concat(outputs, axis=0)
 
+    """
+    Given a training set, train the network using standard gradient descent over a number of epochs with static execution.
+    """
     def train(self, loader, epochs, report_interval=100):
         losses = []
 
@@ -523,7 +612,10 @@ class Conv2DPhasorModel(keras.Model):
                     print("Training loss", loss)
 
         return np.array(losses)
-
+ 
+    """
+    Given a dataflow which can produce an arbitrary number of images to form an augmented dataset, train for a pre-set number of batches.
+    """
     def train_aug(self, loader, batches, report_interval=100):
         losses = []
 
@@ -539,6 +631,9 @@ class Conv2DPhasorModel(keras.Model):
 
         return np.array(losses)
         
+    """
+    Given a series of output phases, produce the predicted class from these outputs. 
+    """
     def predict(self, yh, method="static"):
         if method=="static":
             return self._static_prediction(yh)
@@ -550,10 +645,16 @@ class Conv2DPhasorModel(keras.Model):
             return self._mean_prediction(yh)
 
 
+    """
+    Given a vector of int-based classes, convert these values to a vector of phases.
+    """
     def to_phase(self, y):
         onehot = lambda x: be.one_hot(x, self.n_classes)
         return onehot(y) * self.onehot_phase + self.onehot_offset
 
+    """
+    Given a batch of example inputs and outputs, carry out a single step of training.
+    """
     def train_step(self, x, y):
         y_phase = self.to_phase(y)
 
