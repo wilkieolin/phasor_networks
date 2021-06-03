@@ -70,7 +70,7 @@ class PhasorModel(keras.Model):
             "period" : kwargs.get("period", 1.0),
             #the width of the box current produced by a spike
             "window" : kwargs.get("window", 0.05),
-            #spike detection mode (gradient based or absolute within a period)
+            #spike detection mode ('gradient' or 'cyclemax')
             "spk_mode" : kwargs.get("spk_mode", "gradient"),
             #imaginary (voltage) threshold of the R&F neuron
             "threshold" : kwargs.get("threshold", 0.03),
@@ -379,7 +379,7 @@ class Conv2DPhasorModel(keras.Model):
             "period" : kwargs.get("period", 1.0),
             #the width of the box current produced by a spike
             "window" : kwargs.get("window", 0.05),
-            #spike detection mode (gradient based or absolute within a period)
+            #spike detection mode ('gradient' or 'cyclemax')
             "spk_mode" : kwargs.get("spk_mode", "gradient"),
             #imaginary (voltage) threshold of the R&F neuron
             "threshold" : kwargs.get("threshold", 0.03),

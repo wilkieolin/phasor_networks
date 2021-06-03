@@ -1,3 +1,12 @@
+"""
+This file defines the layers which are composed to form deep phasor networks.
+The methods to execute these layers either with respect to time (temporal/dynamic)
+or without regards to it (atemporal/static) are defined for each layer.
+
+Wilkie Olin-Ammentorp, 2021
+University of Califonia, San Diego
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -11,6 +20,9 @@ from utils import *
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
 
+"""
+A dense layer which uses sparse weights to do a random projection which is not trainable.
+"""
 class StaticLinear(keras.layers.Layer):
     def __init__(self, n_in, n_out, overscan=1.0):
         super(StaticLinear, self).__init__()
@@ -27,11 +39,16 @@ class StaticLinear(keras.layers.Layer):
     def call(self, inputs):
         return tf.matmul(inputs, self.w)
 
+"""
+Layer which defines the operations needed to carry out a standard dense layer of a neural network
+using the temporal/atemporal phasor methods.
+"""
 class CmpxLinear(keras.layers.Layer):
     def __init__(self, units=32, **kwargs):
         super(CmpxLinear, self).__init__()
+        #number of units in the layer
         self.units = units
-        #dynamic execution constants
+        #dynamic execution constants - these are generally passed down from the model when the layer is defined.
         self.leakage = kwargs.get("leakage", -0.2)
         self.period = kwargs.get("period", 1.0)
         #set the eigenfrequency to 1/T
@@ -42,6 +59,9 @@ class CmpxLinear(keras.layers.Layer):
         self.exec_time = kwargs.get("exec_time", 10.0)
         self.max_step = kwargs.get("max_step", 0.01)
 
+    """
+    Add the weights and calculate other parameters needed for execution after construction.
+    """
     def build(self, input_shape):
         self.w = self.add_weight(
             shape=(input_shape[-1], self.units),
@@ -51,13 +71,9 @@ class CmpxLinear(keras.layers.Layer):
         )
         self.n_in = self.w.shape[0]
 
-        #add bias?
-        # self.b = self.add_weight(
-        #     shape=self.units,
-        #     initializer="zeros",
-        #     trainable=True
-        # )
-
+    """
+    Calculate the output phases given an input layer and execution method.
+    """
     def call(self, inputs, mode="static"):
         if mode=="dynamic":
             output = self.call_dynamic(inputs)
@@ -66,6 +82,10 @@ class CmpxLinear(keras.layers.Layer):
 
         return output
 
+    """
+    Given the current time in the calculation and the input spike train, calculate 
+    the currents which are being supplied to each R&F neuron's input synapses.
+    """
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes
         window = self.window
@@ -96,33 +116,56 @@ class CmpxLinear(keras.layers.Layer):
         #make it 2D for the matrix multiply
         return tf.expand_dims(currents, 0)
 
+    """
+    Calculate the differential changes in R&F neuron potential for an instant in time given a time, previous potentials,
+    and a lambda to produce currents given a time (parent function defined above). 
+    """
     def dz(self, t, z, current):
+        #the leakage and oscillation parameters are combined to a single complex constant, k
         k = tf.complex(self.leakage, self.ang_freq)
         
-        #scale currents by synaptic weight
+        #scale calculated currents by the input synaptic weights
         currents = tf.matmul(current(t), self.w)
+        #convert these real values to the complex domain
         currents = tf.complex(currents, tf.zeros_like(currents))
         
+        #update the previous potential and add the currents
         dz = k * z + currents
         return dz.numpy()
 
-    #currently inference only
+    """
+    Given a series of input spike trains (a list with a tuple of (indices, times) for each example), 
+    carry out the dynamic/temporal execution for these inputs and return a spike train. Optionally, save
+    the full solutions through time of the complex potentials (memory-hungry op).
+
+    Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
+    """
     def call_dynamic(self, inputs, save_solutions=False):
+        #array to save full solutions in
         solutions = []
+        #array to save the output spike trains in
         outputs = []
+        #number of examples in the input
         n_batches = len(inputs)
 
         for i in tqdm(range(n_batches)):
+            #extract the spike indices and times for this input
             input_i = inputs[i][0]
             input_t = inputs[i][1]
+            #initialize the complex potentials of the R&F neuron
             z0 = np.zeros((self.units), "complex")
 
+            #define the lambda function to produce currents at any time given this spike train
             i_fn = lambda t: self.current(t, (input_i, input_t))
+            #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
+            #call scipy differential solver
             sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
             if save_solutions:
+                #save the full solutions if desired
                 solutions.append(sol)
 
+            #detect spikes from the output potentials
             if self.spk_mode == "gradient":
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
             elif self.spk_mode == "cyclemax":
@@ -131,17 +174,22 @@ class CmpxLinear(keras.layers.Layer):
                 print("WARNING: Spike mode not recognized, defaulting to gradient")
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
             
+            #convert the dense boolean matrix of detect spikes to a sparse spike train
             spk_inds, spk_tms = np.nonzero(spk)
             spk_tms = sol.t[spk_tms]
 
+            #append the solution's sparse spike train to the outputs
             outputs.append( (spk_inds, spk_tms) )
 
         self.solutions = solutions
         self.spike_trains = outputs
         return outputs
 
-
+    """
+    Given a set of input phases, calculate the output phases using the atemporal/static method.
+    """
     def call_static(self, inputs):
+        #provide a second internal reference to input/output shapes on calling to avoid some awkwardness in current keras ops
         self.input_shape2 = inputs.shape[1:]
 
         pi = tf.constant(np.pi)
@@ -171,20 +219,25 @@ class CmpxLinear(keras.layers.Layer):
     def set_weights(self, weights):
         self.w.value = weights[0]
 
+"""
+Convolutional layer which operates using phasor activations.
+"""
 class CmpxConv2D(keras.layers.Layer):
     def __init__(self, filters, kernel_size, **kwargs):
         super(CmpxConv2D, self).__init__()
+        #standard 2D convolutional parameters: number of filters and kernel size
         self.filters = filters
         self.kernel_size = kernel_size
+        #weight decay used to L2 regularize kernels
         self.weight_decay = kwargs.get("weight_decay", 1e-4)
 
-        #create the convolutional operation via a sub-layer
+        #implement the convolutional operation via a standard keras sub-layer
         self.operation = layers.Conv2D(self.filters, 
                         kernel_size=self.kernel_size,
                         use_bias=False,
                         kernel_regularizer=regularizers.l2(self.weight_decay))
         
-        #dynamic execution constants
+        #dynamic execution constants - inherited from model
         self.leakage = kwargs.get("leakage", -0.2)
         self.period = kwargs.get("period", 1.0)
         #set the eigenfrequency to 1/T
@@ -195,9 +248,15 @@ class CmpxConv2D(keras.layers.Layer):
         self.exec_time = kwargs.get("exec_time", 10.0)
         self.max_step = kwargs.get("max_step", 0.01)
 
+    """
+    Method which builds the convolutional operation after construction.
+    """
     def build(self, input_shape):
         self.operation.build(input_shape)
 
+    """
+    Method to calculate static output phases from a series of input images/channels. 
+    """
     def call(self, inputs):
         pi = tf.constant(np.pi)
         
@@ -216,27 +275,42 @@ class CmpxConv2D(keras.layers.Layer):
 
         return output
 
-    #currently inference only
+    """
+    Given a series of input spike trains (a list with a tuple of (3-D indices, times) for each example), 
+    carry out the dynamic/temporal execution for these inputs and return a spike train. Optionally, save
+    the full solutions through time of the complex potentials (memory-hungry op).
+
+    Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
+    """
     def call_dynamic(self, inputs, save_solutions=False):
+        #array to save full solutions in
         solutions = []
+        #array to save the output spike trains in
         outputs = []
+        #number of examples in the input
         n_batches = len(inputs)
 
+        #calculated output shape & number of features
         out_shape = self.output_shape2
-        n_neurons = np.prod(out_shape)
+        n_features = np.prod(out_shape)
 
         for i in tqdm(range(n_batches)):
+            #extract the spike indices and times for this input
             input_i = inputs[i][0]
             input_t = inputs[i][1]
-            
-            z0 = np.zeros(n_neurons, "complex")
+            #initialize the complex potentials of the R&F neuron
+            z0 = np.zeros(n_features, "complex")
 
+            #define the lambda function to produce currents at any time given this spike train
             i_fn = lambda t: self.current(t, (input_i, input_t))
+            #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
+            #call scipy differential solver
             sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
             if save_solutions:
                 solutions.append(sol)
 
+            #detect spikes from the output potentials
             if self.spk_mode == "gradient":
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
             elif self.spk_mode == "cyclemax":
@@ -245,9 +319,11 @@ class CmpxConv2D(keras.layers.Layer):
                 print("WARNING: Spike mode not recognized, defaulting to gradient")
                 spk = findspks(sol, threshold=self.threshold, period=self.period)
                         
+            #find the vectoral (1-D) indices & times where spikes happened
             spks = tf.where(spk)
             spk_tms = tf.gather(sol.t, spks[:,1])
             spk_tms = tf.cast(spk_tms, "float")
+            #convert the vectoral indices back to 3D coordinates
             spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
             
             outputs.append( (spk_inds, spk_tms) )
@@ -256,6 +332,10 @@ class CmpxConv2D(keras.layers.Layer):
         self.spike_trains = outputs
         return outputs
 
+    """
+    Given the current time in the calculation and the input spike train, calculate 
+    the currents which are being supplied to each R&F neuron's input synapses.
+    """
     def current(self, t, spikes):
         spikes_i, spikes_t = spikes
         window = self.window
@@ -287,11 +367,17 @@ class CmpxConv2D(keras.layers.Layer):
         currents = tf.expand_dims(currents, axis=0)
         return currents
 
+    """
+    Calculate the differential changes in R&F neuron potential for an instant in time given a time, previous potentials,
+    and a lambda to produce currents given a time (parent function defined above). 
+    """
     def dz(self, t, z, current):
         #constant which defines leakage, oscillation
         k = tf.complex(self.leakage, self.ang_freq)
         
+        #carry out the convolution over the input currents
         real_output = self.operation(current(t))
+        #currents are defined as real values, im component is zero
         imag_output = tf.zeros_like(real_output)
         currents = tf.complex(real_output, imag_output)
 
@@ -312,7 +398,10 @@ class CmpxConv2D(keras.layers.Layer):
     def set_weights(self, weights):
         self.operation.kernel.value = weights[0]
         
-
+"""
+Layer which normalizes inputs with 2 self-learned parameters on an input stream.
+Similar to batch norm but uses single mean and std. dev across entire input vector.
+"""
 class Normalize(keras.layers.Layer):
     def __init__(self, sigma, **kwargs):
         super(Normalize, self).__init__()

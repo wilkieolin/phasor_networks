@@ -1,3 +1,12 @@
+"""
+This file defines models using standard activations which can be used to compare the performance
+of traditional networks (using ReLU/other activations) to those using phasor activations.
+Convenience functions to create/compile corresponding phasor networks are also provided.
+
+Wilkie Olin-Ammentorp, 2021
+University of Califonia, San Diego
+"""
+
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow.keras as keras
@@ -110,7 +119,6 @@ def make_conv2D(weight_decay=1e-4, dropout_rate=0.25, n_hidden=1000):
 """
 ############# Phasor models #################
 """
-
 def make_phasor():
     model = PhasorModel(input_shape, onehot_offset=0.0, onehot_phase=0.5, max_step=0.05, projection="none")
     model.compile(optimizer="rmsprop")
