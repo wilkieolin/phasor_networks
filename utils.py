@@ -1,6 +1,17 @@
+"""
+This file defines functions which are used to support the calculations used in layers, models,
+and data analysis. 
+
+Wilkie Olin-Ammentorp, 2021
+University of Califonia, San Diego
+"""
+
 import tensorflow as tf
 import numpy as np
 
+"""
+Given a list of spike trains, calculate the average phase for each neuron.
+"""
 def avgphase(trains, n_n):
     n_b = len(trains)
 
@@ -17,6 +28,9 @@ def avgphase(trains, n_n):
         
     return np.array(outputs)
     
+"""
+Construct a sparse rectangular matrix by looping through and adding weights at random locations each time.
+"""
 def construct_sparse(n1, n2, overscan=1.0):
     shp = (n1,n2)
     m = np.zeros(shp).ravel()
@@ -42,6 +56,9 @@ def construct_sparse(n1, n2, overscan=1.0):
             
     return tf.constant(m, dtype="float32")
 
+"""
+Remove random spikes from a spike train (dropout executed in time).
+"""
 def dynamic_dropout(trains, rate):
     def dropout_lambda(x):
         indices, times = x
@@ -65,6 +82,9 @@ def dynamic_dropout(trains, rate):
     
     return list(map(dropout_lambda, trains))
 
+"""
+Given a spike train, convert its indices from 3D to 1D equivalents (ravel op).
+"""
 def dynamic_flatten(trains, input_shape):
     
     def flatten_lambda(x):
@@ -75,22 +95,28 @@ def dynamic_flatten(trains, input_shape):
 
     return list(map(flatten_lambda, trains))
 
+"""
+Given a spike train, compute for each feature in the pool its minimum value (earliest spike).
+Uses absolute timing to establish the temporal extent of each cycle.
+"""
 def dynamic_minpool2D(trains, input_shape, pool_size=(2,2), period=1.0, depth=0):
     assert len(pool_size) == 2, "Must have 2-D pool"
 
+    #how deep this layer is in the network will establish the start of each period
     offset = period / 4.0 * depth
+    #construct a winner-take-all op which will remove spikes in each period after the first one
     r_lambda = lambda x: refract_absolute(x, period, offset)
-    
+    #generate lists which map each input feature to an output pool
     index_groups, output_shape = generate_index_groups(input_shape, pool_size)
                             
     #transform an individual spike train by pooling times locally to get the first-firing
     def train_lambda(train):
-        
+        #define a lambda from the pooling operation
         pool_lambda = lambda x: pool(x, train, r_lambda)
-        
-        #collect the min-pooled firing times over all pools
+        #map it to collect the min-pooled firing times over all pools
         output = list(map(pool_lambda, index_groups))
         
+        #concatentate the list output to a tensor
         output_indices = tf.concat([o[0] for o in output], axis=1)
         output_times = tf.concat([o[1] for o in output], axis=0)
         
@@ -98,12 +124,20 @@ def dynamic_minpool2D(trains, input_shape, pool_size=(2,2), period=1.0, depth=0)
 
     return list(map(train_lambda, trains))
 
+"""
+Given a list of spike trains with 1-D indices, convert each example back to 3-D indices
+"""
 def dynamic_unflatten(trains, input_shape):
     unflatten_lambda = lambda x: tf.unravel_index(x[0], input_shape)
 
     return list(map(unflatten_lambda, trains))
 
+"""
+'Gradient' method for spike detection. Finds where voltages (imaginary component of complex R&F potential) 
+reaches a local minimum & are above a threshold, stores the corresponding time, and then imposes a refractory period. 
+"""
 def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
+    #calculate the temporal extent of the refractory period given its duty cycle
     refrac_t = period*refractory
     ts = sol.t
     tmax = ts[-1]
@@ -139,6 +173,10 @@ def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
 
     return spks
 
+"""
+'Cyclemax' method for spike detection. Finds where voltages (imaginary component of complex R&F potential) 
+reach their maximum values during a cycle. Not as realistic as gradient and cannot be computed in a realtime manner.
+"""
 def findspks_max(sol, threshold=0.05, period=1.0):
     all_spks = []
     
@@ -173,7 +211,8 @@ def findspks_max(sol, threshold=0.05, period=1.0):
     return all_spks
 
 """
-Given the inputs, generate the input -> output mapping
+Given the shape of a convolutional feature layer and a pooling size,
+compute the mappings from input features to output pools. 
 """
 def generate_index_groups(input_shape, pool_size):
     n_x, n_y, n_c = input_shape
@@ -212,6 +251,9 @@ def generate_index_groups(input_shape, pool_size):
                 
     return kernel_pairs, output_shape
 
+"""
+Convenience function to limit memory growth.
+"""
 def limit_gpus():
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
     for device in physical_devices:
@@ -229,6 +271,10 @@ def phase_to_complex(x):
     im = tf.complex(0.0, 1.0)
     return tf.exp(im * x * pi)
 
+"""
+Given a series of input phases defined as a real tensor, convert these values to a 
+temporal spike train. 
+"""
 def phase_to_train(x, shape, period=1.0, repeats=3):
         n_batch = x.shape[0]
         features = np.prod(shape)
@@ -259,7 +305,10 @@ def phase_to_train(x, shape, period=1.0, repeats=3):
         
         return output
 
-#given the indices of a single pool, get the minpool values
+"""
+Given the mapping of input features to output pool for a single pool, apply the refraction
+to produce the min-pool values. 
+"""
 def pool(pool_mapping, train, refraction):
     #the indices which the current kernel is collecting from
     kernel_output_ind, kernel_input_inds = pool_mapping
@@ -276,7 +325,6 @@ def pool(pool_mapping, train, refraction):
 
     if len(all_matches > 0):
         pool_times = tf.squeeze(tf.gather(train_times, all_matches))
-
         times = refraction(pool_times)
 
         n_t = times.shape[0]
@@ -284,12 +332,17 @@ def pool(pool_mapping, train, refraction):
         indices = tf.tile(kernel_output_ind, (n_t, 1))
         indices = tf.transpose(indices, (1,0))
     else:
+        #if there are no spikes then return an empty tensor
         empty = lambda: tf.constant([])
         indices = empty()
         times = empty()
 
     return (indices, times)
 
+"""
+Given a multi-dimensional indices from a layer with a certain shape, convert these indices to 
+1-D equivalents.
+"""
 def ravel_index(indices, shape):
 
     strides = tf.math.cumprod(shape, exclusive=True, reverse=True)
@@ -301,7 +354,10 @@ def ravel_index(indices, shape):
     
     return flat_indices
 
-@tf.function
+
+"""
+TF-based refractory period op. Not currently used.
+"""
 def raster_refract(spike_raster, times, r_period):
     def refract_channel(vec, times, r_period):
         #keep indices where a spike happens outside the last one's refractory period
@@ -330,10 +386,13 @@ def raster_refract(spike_raster, times, r_period):
 
     return tf.map_fn(lambda x: refract_channel(x, times, r_period), spike_raster)
 
-
+"""
+Given a list of times, refract the spike these times represent by removing any times
+falling in r_period after an initial spike.
+"""
 def refract(times, r_period):
     n_s = times.shape[0]
-    #use numpy because TF can be *very* slow at iterated scalar ops
+    #use numpy because TF can be very slow at iterated scalar ops
     times = tf.sort(times, axis=0).numpy()
     
     inds = []
@@ -350,6 +409,9 @@ def refract(times, r_period):
     refractory_times = tf.gather(times, inds)
     return refractory_times
 
+"""
+Winner-take-all operation for spikes in a layer. For each cycle, return only the first spike which happens.
+"""
 def refract_absolute(times, period, offset):
     n_s = times.shape[0]
     
@@ -372,7 +434,6 @@ def refract_absolute(times, period, offset):
 """
 Move phases from (-inf, inf) into (-pi, pi)
 """
-#@tf.function
 def remap_phase(x):
     #move from (-inf, inf) to (0,2)
     n1 = tf.constant(-1.0)
@@ -384,6 +445,9 @@ def remap_phase(x):
     return n1 * tau * tf.cast(tf.math.greater(x, pi), tf.float32) + x
 
 
+"""
+For examining solutions of R&F neurons, slice a solution into its component cycles. 
+"""
 def split_by_period(sol, dtype="v", period=1.0):
     if dtype=="v":
         #looking at the voltage
@@ -414,7 +478,7 @@ def split_by_period(sol, dtype="v", period=1.0):
     return slices
     
 """
-Restrict visible GPUs since TF is a little greedy
+Convienience function to restrict visible GPUs since TF recruits all by default
 """
 def set_gpu(idx):
     if idx == None:
@@ -424,14 +488,16 @@ def set_gpu(idx):
         tf.config.set_visible_devices(physical_devices[idx], 'GPU')
 
 """
-Return the similarity of two phase vectors defined by the FHNN framework
+Return the similarity of two phase vectors defined by the FHNN framework/cosine similarity
 """
-#@tf.function
 def similarity(x, y):
     assert x.shape == y.shape, "Function is for comparing similarity of tensors with identical shapes and 1:1 mapping: " + str(x.shape) + " " + str(y.shape)
     pi = tf.constant(np.pi)
     return tf.math.reduce_mean(tf.math.cos(pi*(x - y)), axis=1)
 
+"""
+Given a dense real tensor representing spikes, return a sparse spike train.
+"""
 def raster_to_train(spike_raster):
     spks = tf.where(spike_raster > 0.0)
 
@@ -441,6 +507,9 @@ def raster_to_train(spike_raster):
 
     return (spk_inds, spk_tms)
 
+"""
+Decode the times of a spike train back into tensors of phase given the output shape, layer depth, number of cycles to decode, and neuronal eigenfrequency.
+"""
 def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
     n_b = len(trains)
 
@@ -487,9 +556,8 @@ def train_to_phase(trains, shape, depth=0, repeats=3, period=1.0):
     return outputs
 
 """
-A loss function which maximises similarity between all VSA vectors.
+A loss function which maximises similarity between all FHRR VSA vectors.
 """
-#@tf.function
 def vsa_loss(y, yh):
     loss = tf.math.reduce_mean(1 - similarity(y, yh))
     return loss
