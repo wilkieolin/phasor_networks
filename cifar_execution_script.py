@@ -22,7 +22,7 @@ ds_train, ds_test, ds_info = load_dataset(dataset, n_batch)
 input_shape = ds_info.features['image'].shape
 num_classes = ds_info.features['label'].num_classes
 
-m_repeats = 15
+m_repeats = 20
 
 x_train, y_train = get_raw_dat(ds_train)
 datagen = ImageDataGenerator(
