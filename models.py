@@ -186,7 +186,7 @@ class PhasorModel(keras.Model):
     """
     Call method for dynamic (temporal) network execution using R&F neurons.
     """
-    def call_dynamic(self, inputs):
+    def call_dynamic(self, inputs, dropout=0.0):
         x = self.flatten(inputs)
         if self.projection == "NP":
             x = self.image_encoder(x, training=True)
@@ -194,8 +194,12 @@ class PhasorModel(keras.Model):
             x = tf.multiply(self.direction, x)
         #convert continuous time representations into periodic spike train
         s = self.phase_to_train(x)
-        s = self.dense1.call_dynamic(s)
-        s = self.dense2.call_dynamic(s)
+        if dropout > 0.0:
+            s = dynamic_dropout(s, dropout)
+
+        s = self.dense1.call_dynamic(s, dropout=dropout)
+        #don't dropout at the final layer
+        s = self.dense2.call_dynamic(s, dropout=0.0)
         #convert the spikes back to phases
         y = self.train_to_phase(s, depth=1)
 
@@ -386,7 +390,7 @@ class Conv2DPhasorModel(keras.Model):
             #how long the dynamic network will be executed for
             "exec_time" : kwargs.get("exec_time", 10.0),
             #maximum dt for the differential solver
-            "max_step" : kwargs.get("max_step", 0.02)
+            "max_step" : kwargs.get("max_step", 0.02),
         }
         #how many cycles of spikes will be presented as a dynamic input
         self.repeats = kwargs.get("repeats", 10)
@@ -541,35 +545,41 @@ class Conv2DPhasorModel(keras.Model):
     """
     Call method for dynamic (temporal) network execution using R&F neurons.
     """
-    def call_dynamic(self, inputs):
+    def call_dynamic(self, inputs, dropout=0.0):
         assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
         x = self.project_fn(inputs)
         x = self.batchnorm(x)
         #convert continuous time representations into periodic spike train
         s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
+        if dropout > 0.0:
+            s = dynamic_dropout(s, dropout)
 
         #conv block 1
         print("Dynamic Execution: Conv 1")
-        s = self.conv1.call_dynamic(s)
-        s = self.conv2.call_dynamic(s)
+        s = self.conv1.call_dynamic(s, dropout=dropout)
+        #don't dropout before pooling
+        s = self.conv2.call_dynamic(s, dropout=0.0)
         s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size, depth=2)
-        #s = dynamic_dropout(s, self.dropout_rate)
+        if dropout > 0.0:
+            s = dynamic_dropout(s, dropout)
 
         #conv block 2
         print("Dynamic Execution: Conv 2")
-        s = self.conv3.call_dynamic(s)
-        s = self.conv4.call_dynamic(s)
+        s = self.conv3.call_dynamic(s, dropout=dropout)
+        s = self.conv4.call_dynamic(s, dropout=0.0)
         s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size, depth=4)
-        #s = dynamic_dropout(s, self.dropout_rate)
+        if dropout > 0.0:
+            s = dynamic_dropout(s, dropout)
 
         current_shape = self.pool_layer2.compute_output_shape([None, *self.conv4.output_shape2])[1:]
         s = dynamic_flatten(s, current_shape)
 
         #dense block & output 
         print("Dynamic Execution: Dense")
-        s = self.dense1.call_dynamic(s)
+        s = self.dense1.call_dynamic(s, dropout=dropout)
         #s = dynamic_dropout(s, self.dropout_rate)
-        s = self.dense2.call_dynamic(s)
+        #don't dropout at final layer
+        s = self.dense2.call_dynamic(s, dropout=0.0)
         #convert the spikes back to phases
         y = train_to_phase(s, self.dense2.output_shape2, depth=6, repeats=self.repeats, period=self.dyn_params["period"])
 

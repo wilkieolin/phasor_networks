@@ -1,3 +1,10 @@
+"""
+This file defines functions used to import and handle data. 
+
+Wilkie Olin-Ammentorp, 2021
+University of Califonia, San Diego
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -8,8 +15,11 @@ import tensorflow.keras.layers as layers
 
 from utils import similarity
 
+"""
+Normalizes images: `uint8` -> `float32`.
+"""
 def normalize_img(image, label):
-    """Normalizes images: `uint8` -> `float32`."""
+    
     return tf.cast(image, tf.float32) / 255., label
 
 """
@@ -54,6 +64,9 @@ def get_raw_dat(data):
     
     return xs, ys
 
+"""
+Given a list of symbols x, select a subset (randomly, by default, otherwise the first n samples)
+"""
 def cut(x, n, rand_sel=True):
     d = []
     n_s = x[0].shape[0]
@@ -70,7 +83,9 @@ def cut(x, n, rand_sel=True):
         
     return tuple(d)
 
-
+"""
+Given a confusion matrix, calculate the corresponding accuracy score.
+"""
 def confusion_to_accuracy(confusion):
     total = tf.math.reduce_sum(confusion)
     correct = tf.math.reduce_sum(tf.linalg.diag_part(confusion))

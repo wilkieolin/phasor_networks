@@ -140,7 +140,7 @@ class CmpxLinear(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -180,6 +180,9 @@ class CmpxLinear(keras.layers.Layer):
 
             #append the solution's sparse spike train to the outputs
             outputs.append( (spk_inds, spk_tms) )
+
+        if dropout > 0.0:
+            self.outputs = dynamic_dropout(outputs, dropout)
 
         self.solutions = solutions
         self.spike_trains = outputs
@@ -282,7 +285,7 @@ class CmpxConv2D(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -327,6 +330,9 @@ class CmpxConv2D(keras.layers.Layer):
             spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
             
             outputs.append( (spk_inds, spk_tms) )
+
+        if dropout > 0.0:
+            self.outputs = dynamic_dropout(outputs, dropout)
 
         self.solutions = solutions
         self.spike_trains = outputs
