@@ -8,6 +8,7 @@ University of Califonia, San Diego
 
 import tensorflow as tf
 import numpy as np
+from scipy.stats import norm
 
 """
 Given a list of spike trains, calculate the average phase for each neuron.
@@ -94,6 +95,22 @@ def dynamic_flatten(trains, input_shape):
         return (flat_indices, times)
 
     return list(map(flatten_lambda, trains))
+
+"""
+Add random offsets drawn from a normal distribution to the times of a spike train
+"""
+def dynamic_jitter(trains, stddev):
+    dist = norm(scale=stddev)
+
+    def jitter_lambda(x):
+        indices, times = x
+        jitter = dist.rvs(size=times.shape)
+        times = times + jitter
+        train = (indices, times)
+
+        return train
+
+    return list(map(jitter_lambda, trains))
 
 """
 Given a spike train, compute for each feature in the pool its minimum value (earliest spike).
