@@ -196,6 +196,8 @@ class PhasorModel(keras.Model):
         s = self.phase_to_train(x)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
+        if jitter > 0.0:
+            s = dynamic_jitter(s, jitter)
 
         s = self.dense1.call_dynamic(s, dropout=dropout, jitter=jitter)
         #don't dropout/jitter at the final layer

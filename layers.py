@@ -92,6 +92,8 @@ class CmpxLinear(keras.layers.Layer):
         
         shape = self.input_shape2
         cast = lambda x: tf.cast(x, "float")
+
+        spikes_t = cast(spikes_t)
         box_start = cast(tf.constant(t - window))
         box_end = cast(tf.constant(t + window))
 
@@ -182,10 +184,10 @@ class CmpxLinear(keras.layers.Layer):
             outputs.append( (spk_inds, spk_tms) )
 
         if dropout > 0.0:
-            self.outputs = dynamic_dropout(outputs, dropout)
+            outputs = dynamic_dropout(outputs, dropout)
 
         if jitter > 0.0:
-            self.outputs = dynamic_jitter(outputs, jitter)
+            outputs = dynamic_jitter(outputs, jitter)
 
         self.solutions = solutions
         self.spike_trains = outputs
@@ -335,10 +337,10 @@ class CmpxConv2D(keras.layers.Layer):
             outputs.append( (spk_inds, spk_tms) )
 
         if dropout > 0.0:
-            self.outputs = dynamic_dropout(outputs, dropout)
+            outputs = dynamic_dropout(outputs, dropout)
 
         if jitter > 0.0:
-            self.outputs = dynamic_jitter(outputs, jitter)
+            outputs = dynamic_jitter(outputs, jitter)
 
         self.solutions = solutions
         self.spike_trains = outputs
@@ -354,6 +356,7 @@ class CmpxConv2D(keras.layers.Layer):
         
         shape = self.input_shape2
         cast = lambda x: tf.cast(x, "float")
+        spikes_t = cast(spikes_t)
         box_start = cast(tf.constant(t - window))
         box_end = cast(tf.constant(t + window))
 
