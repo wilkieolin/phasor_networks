@@ -141,6 +141,21 @@ def dynamic_minpool2D(trains, input_shape, pool_size=(2,2), period=1.0, depth=0)
     return list(map(train_lambda, trains))
 
 """
+Given a spike train, force times to be quantized (simulates operating with different time
+resolutions).
+"""
+def dynamic_quantize(trains, levels):
+
+    def quantize_lambda(x):
+        indices, times = x
+        int_times = tf.math.floor(times * levels)
+        times = int_times / levels
+        train = indices, times
+        return train
+
+    return list(map(quantize_lambda, trains))
+
+"""
 Given a list of spike trains with 1-D indices, convert each example back to 3-D indices
 """
 def dynamic_unflatten(trains, input_shape):
