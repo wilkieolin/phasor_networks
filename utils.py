@@ -148,7 +148,7 @@ def dynamic_quantize(trains, levels):
 
     def quantize_lambda(x):
         indices, times = x
-        int_times = tf.math.floor(times * levels)
+        int_times = np.floor(times * levels)
         times = int_times / levels
         train = indices, times
         return train
@@ -162,6 +162,43 @@ def dynamic_unflatten(trains, input_shape):
     unflatten_lambda = lambda x: tf.unravel_index(x[0], input_shape)
 
     return list(map(unflatten_lambda, trains))
+
+"""
+Dummy class to provide right structure of outputs for euler solutions
+"""
+class EulerSolution():
+    def __init__(self):
+        self.t = np.array([])
+        self.y = np.array([])
+
+"""
+Simple forward Euler method to provide fine-grained control over solver points and computation
+"""
+def euler_solve(dx, tspan, init_val, dt, dtype=np.complex):
+    t_start, t_stop = tspan
+    
+    times = []
+    t = t_start
+    while t < t_stop:
+        times.append(t)
+        t = t + dt
+        
+    times = np.array(times)
+    y_shape = (len(init_val), len(times))
+    y = np.zeros(shape=y_shape, dtype=dtype)
+    y[:,0] = init_val
+    
+    for (i,t) in enumerate(times):
+        if i == 0:
+            continue
+        
+        y[:,i] = y[:,i-1] + dx(t, y[:,i-1])*dt
+
+    solution = EulerSolution()
+    solution.y = y
+    solution.t = times
+
+    return solution
 
 """
 'Gradient' method for spike detection. Finds where voltages (imaginary component of complex R&F potential) 

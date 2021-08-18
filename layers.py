@@ -57,7 +57,7 @@ class CmpxLinear(keras.layers.Layer):
         self.spk_mode = kwargs.get("spk_mode", "gradient")
         self.threshold = kwargs.get("threshold", 0.03)
         self.exec_time = kwargs.get("exec_time", 10.0)
-        self.max_step = kwargs.get("max_step", 0.01)
+        self.max_step = kwargs.get("max_step", np.inf)
 
     """
     Add the weights and calculate other parameters needed for execution after construction.
@@ -142,7 +142,7 @@ class CmpxLinear(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, solver="RK45", save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -161,8 +161,12 @@ class CmpxLinear(keras.layers.Layer):
             i_fn = lambda t: self.current(t, (input_i, input_t))
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
-            #call scipy differential solver
-            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+            if solver == "euler":
+                sol = euler_solve(dz_fn, (0.0, self.exec_time), z0, dt=self.max_step)
+            else:
+                #call scipy differential solver
+                sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+                
             if save_solutions:
                 #save the full solutions if desired
                 solutions.append(sol)
@@ -257,7 +261,7 @@ class CmpxConv2D(keras.layers.Layer):
         self.spk_mode = kwargs.get("spk_mode", "gradient")
         self.threshold = kwargs.get("threshold", 0.03)
         self.exec_time = kwargs.get("exec_time", 10.0)
-        self.max_step = kwargs.get("max_step", 0.01)
+        self.max_step = kwargs.get("max_step", np.inf)
 
     """
     Method which builds the convolutional operation after construction.
@@ -293,7 +297,7 @@ class CmpxConv2D(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, t_eval=None, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -317,7 +321,7 @@ class CmpxConv2D(keras.layers.Layer):
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             #call scipy differential solver
-            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+            sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step, t_eval=t_eval)
             if save_solutions:
                 solutions.append(sol)
 
