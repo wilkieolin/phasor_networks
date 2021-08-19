@@ -176,15 +176,10 @@ Simple forward Euler method to provide fine-grained control over solver points a
 """
 def euler_solve(dx, tspan, init_val, dt, dtype=np.complex):
     t_start, t_stop = tspan
-    
-    times = []
-    t = t_start
-    while t < t_stop:
-        times.append(t)
-        t = t + dt
-        
-    times = np.array(times)
-    y_shape = (len(init_val), len(times))
+    n_points = int(np.ceil(t_stop / dt) + 1) 
+    times = np.arange(0, n_points) * dt
+
+    y_shape = (len(init_val), n_points)
     y = np.zeros(shape=y_shape, dtype=dtype)
     y[:,0] = init_val
     
@@ -232,11 +227,17 @@ def findspks(sol, threshold=2e-3, refractory=0.25, period=1.0):
                 stop_i = -1
             else:
                 #find the first index where t > stop
-                stop_i = np.nonzero(ts > stop)[0][0]
+                future_indices = np.nonzero(ts > stop)
+                if future_indices[0].shape[0] > 0:
+                    stop_i = future_indices[0][0]
+                else:
+                    stop_i = -1
             
+            #for each channel of neurons
             for n in range(n_n):
                 #if there's a spike
                 if spks[n,t] == True:
+                    #erase other spikes occurring within the refractory period
                     spks[n,t+1:stop_i] = False
 
     return spks
