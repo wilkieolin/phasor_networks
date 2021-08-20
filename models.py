@@ -301,8 +301,11 @@ class PhasorModel(keras.Model):
         elif method=="dynamic_mode":
             return self._mode_prediction(yh)
 
-        else:
+        elif method=="dynamic_mean":
             return self._mean_prediction(yh)
+
+        else:
+            return self._last_prediction(yh)
 
 
     """
@@ -561,12 +564,11 @@ class Conv2DPhasorModel(keras.Model):
     """
     Call method for dynamic (temporal) network execution using R&F neurons.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, solver="RK45"):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45"):
         assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
 
         exec_options = {"dropout": dropout, 
                         "jitter": jitter,
-                        "resolution": resolution,
                         "solver": solver,
                         }
         x = self.project_fn(inputs)
@@ -582,7 +584,7 @@ class Conv2DPhasorModel(keras.Model):
         print("Dynamic Execution: Conv 1")
         s = self.conv1.call_dynamic(s, **exec_options)
         #don't dropout before pooling, apply it after
-        s = self.conv2.call_dynamic(s, dropout=0.0, jitter=jitter, resolution=resolution, solver=solver)
+        s = self.conv2.call_dynamic(s, dropout=0.0, jitter=jitter, solver=solver)
         s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size, depth=2)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
@@ -590,7 +592,7 @@ class Conv2DPhasorModel(keras.Model):
         #conv block 2
         print("Dynamic Execution: Conv 2")
         s = self.conv3.call_dynamic(s, **exec_options)
-        s = self.conv4.call_dynamic(s, dropout=0.0, jitter=jitter, resolution=resolution, solver=solver)
+        s = self.conv4.call_dynamic(s, dropout=0.0, jitter=jitter, solver=solver)
         s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size, depth=4)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
@@ -602,7 +604,7 @@ class Conv2DPhasorModel(keras.Model):
         print("Dynamic Execution: Dense")
         s = self.dense1.call_dynamic(s, **exec_options)
         #don't dropout at final layer
-        s = self.dense2.call_dynamic(s, dropout=0.0, jitter=0.0, resolution=resolution, solver=solver)
+        s = self.dense2.call_dynamic(s, dropout=0.0, jitter=0.0, solver=solver)
         #convert the spikes back to phases
         y = train_to_phase(s, self.dense2.output_shape2, depth=6, repeats=self.repeats, period=self.dyn_params["period"])
 
@@ -611,7 +613,7 @@ class Conv2DPhasorModel(keras.Model):
     """
     Given a dataset, produce the network's output phases with either static or dynamic execution.
     """
-    def evaluate(self, loader, method="static"):
+    def evaluate(self, loader, method="static", **kwargs):
         outputs = []
 
         for data in loader:
@@ -619,10 +621,10 @@ class Conv2DPhasorModel(keras.Model):
             ns = x.shape[0]
 
             if method == "dynamic":
-                yh = self.call_dynamic(x)
+                yh = self.call_dynamic(x, **kwargs)
                 
             else:
-                yh = self.call(x)
+                yh = self.call(x, **kwargs)
 
             outputs.append(yh)
 

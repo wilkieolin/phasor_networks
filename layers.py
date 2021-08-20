@@ -74,11 +74,11 @@ class CmpxLinear(keras.layers.Layer):
     """
     Calculate the output phases given an input layer and execution method.
     """
-    def call(self, inputs, mode="static"):
+    def call(self, inputs, mode="static", **kwargs):
         if mode=="dynamic":
-            output = self.call_dynamic(inputs)
+            output = self.call_dynamic(inputs, **kwargs)
         else:
-            output = self.call_static(inputs)
+            output = self.call_static(inputs, **kwargs)
 
         return output
 
@@ -142,13 +142,20 @@ class CmpxLinear(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, solver="RK45", save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", precision=-1, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
         outputs = []
         #number of examples in the input
         n_batches = len(inputs)
+        #reduce the precision of the weights if requested
+        if precision > 0:
+            old_weights = []
+            for (var, i) in self.weights:
+                wg = var.value()
+                old_weights.append(wg)
+                var.assign(quantize_weights(wg, precision))            
 
         for i in tqdm(range(n_batches)):
             #extract the spike indices and times for this input
@@ -193,8 +200,11 @@ class CmpxLinear(keras.layers.Layer):
         if jitter > 0.0:
             outputs = dynamic_jitter(outputs, jitter)
 
-        if resolution > 0:
-            outputs = dynamic_quantize(outputs, resolution)
+        #restore the old weights if they were rounded off
+        if precision > 0:
+            for (var, i) in self.weights:
+                wg = old_weights[i]
+                var.assign(wg)
 
         self.solutions = solutions
         self.spike_trains = outputs
@@ -297,7 +307,7 @@ class CmpxConv2D(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, resolution=-1, solver="RK45", save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -352,9 +362,6 @@ class CmpxConv2D(keras.layers.Layer):
 
         if jitter > 0.0:
             outputs = dynamic_jitter(outputs, jitter)
-
-        if resolution > 0:
-            outputs = dynamic_quantize(outputs, resolution)
 
         self.solutions = solutions
         self.spike_trains = outputs

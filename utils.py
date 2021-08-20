@@ -409,6 +409,23 @@ def pool(pool_mapping, train, refraction):
     return (indices, times)
 
 """
+Given a series of weights in a layer, round them off assuming a int-based representation and floating scale
+which can be compensated for within the neuron.
+"""
+def quantize_weights(weights, bits):
+    levels = int(np.floor(np.power(2, bits)))
+    range = tf.reduce_max(weights) - tf.reduce_min(weights)
+
+    #snap to int-based levels within the weights' dynamic range
+    x = (weights / range) + 0.5
+    x = tf.round(x * levels)
+    x = x / levels
+    x = (x - 0.5) * range
+
+    return x
+
+
+"""
 Given a multi-dimensional indices from a layer with a certain shape, convert these indices to 
 1-D equivalents.
 """
@@ -563,18 +580,6 @@ def similarity(x, y):
     assert x.shape == y.shape, "Function is for comparing similarity of tensors with identical shapes and 1:1 mapping: " + str(x.shape) + " " + str(y.shape)
     pi = tf.constant(np.pi)
     return tf.math.reduce_mean(tf.math.cos(pi*(x - y)), axis=1)
-
-"""
-Given a dense real tensor representing spikes, return a sparse spike train.
-"""
-def raster_to_train(spike_raster):
-    spks = tf.where(spike_raster > 0.0)
-
-    spk_tms = tf.gather(sol.t, spks[:,1])
-    spk_tms = tf.cast(spk_tms, "float")
-    spk_inds = tf.unravel_index(spks[:,0], dims=out_shape)
-
-    return (spk_inds, spk_tms)
 
 """
 Decode the times of a spike train back into tensors of phase given the output shape, layer depth, number of cycles to decode, and neuronal eigenfrequency.
