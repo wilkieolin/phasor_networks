@@ -97,6 +97,16 @@ class PhasorModel(keras.Model):
         self.dropout2 = layers.Dropout(self.dropout_rate, name="dropout2")
         self.dense2 = CmpxLinear(self.n_classes, **self.dyn_params, name="complex2")
 
+
+    """
+    Make a prediction of class by using only the last cycle
+    """
+    def _last_prediction(self, yh):
+        #take the average across phases
+        yh_last = yh[:,-1,:]
+        yh_i = np.argmin(np.abs(yh_last - self.onehot_phase), axis=1)
+        return yh_i
+
     """
     Make a prediction of class by averaging across all the output cycles
     """
@@ -135,9 +145,13 @@ class PhasorModel(keras.Model):
             x, y = data
             ns = x.shape[0]
 
-            if method == "dynamic_mean" or method == "dynamic":
+            if method == "dynamic_mean":
                 yh = self.call_dynamic(x)
                 yh_i = self._mean_prediction(yh)
+
+            elif method == "dynamic_last" or method == "dynamic":
+                yh = self.call_dynamic(x)
+                yh_i = self._last_prediction(yh)
 
             elif method == "dynamic_mode":
                 yh = self.call_dynamic(x)
