@@ -535,7 +535,7 @@ class Conv2DPhasorModel(keras.Model):
     """
     Standard call method for static (atemporal) network execution. 
     """
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         #input layers (real domain)
         x = self.project_fn(inputs)
         x = self.batchnorm(x)

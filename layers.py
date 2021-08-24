@@ -169,7 +169,9 @@ class CmpxLinear(keras.layers.Layer):
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             if solver == "euler":
-                sol = euler_solve(dz_fn, (0.0, self.exec_time), z0, dt=self.max_step)
+                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+            elif solver == "heun":
+                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, self.max_step)
             else:
                 #call scipy differential solver
                 sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
@@ -213,7 +215,7 @@ class CmpxLinear(keras.layers.Layer):
     """
     Given a set of input phases, calculate the output phases using the atemporal/static method.
     """
-    def call_static(self, inputs):
+    def call_static(self, inputs, **kwargs):
         #provide a second internal reference to input/output shapes on calling to avoid some awkwardness in current keras ops
         self.input_shape2 = inputs.shape[1:]
 
@@ -282,7 +284,7 @@ class CmpxConv2D(keras.layers.Layer):
     """
     Method to calculate static output phases from a series of input images/channels. 
     """
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         pi = tf.constant(np.pi)
         
         #convert the phase angles into complex vectors
@@ -331,7 +333,9 @@ class CmpxConv2D(keras.layers.Layer):
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             if solver == "euler":
-                sol = euler_solve(dz_fn, (0.0, self.exec_time), z0, dt=self.max_step)
+                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+            elif solver == "heun":
+                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, self.max_step)
             else:
                 #call scipy differential solver
                 sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)

@@ -166,7 +166,7 @@ def dynamic_unflatten(trains, input_shape):
 """
 Dummy class to provide right structure of outputs for euler solutions
 """
-class EulerSolution():
+class ODESolution():
     def __init__(self):
         self.t = np.array([])
         self.y = np.array([])
@@ -174,7 +174,7 @@ class EulerSolution():
 """
 Simple forward Euler method to provide fine-grained control over solver points and computation
 """
-def euler_solve(dx, tspan, init_val, dt, dtype=np.complex):
+def solve_euler(dx, tspan, init_val, dt, dtype=np.complex):
     t_start, t_stop = tspan
     n_points = int(np.ceil(t_stop / dt) + 1) 
     times = np.arange(0, n_points) * dt
@@ -189,7 +189,35 @@ def euler_solve(dx, tspan, init_val, dt, dtype=np.complex):
         
         y[:,i] = y[:,i-1] + dx(t, y[:,i-1])*dt
 
-    solution = EulerSolution()
+    solution = ODESolution()
+    solution.y = y
+    solution.t = times
+
+    return solution
+
+"""
+Heun method to provide fine-grained control over solver points and computation
+"""
+def solve_heun(dx, tspan, init_val, dt, dtype=np.complex):
+    t_start, t_stop = tspan
+    n_points = int(np.ceil(t_stop / dt) + 1) 
+    times = np.arange(0, n_points) * dt
+
+    y_shape = (len(init_val), n_points)
+    y = np.zeros(shape=y_shape, dtype=dtype)
+    y[:,0] = init_val
+    
+    for (i,t) in enumerate(times):
+        if i == 0:
+            continue
+        
+        slope0 = dx(times[i-1], y[:,i-1])
+        y1 = y[:,i-1] + dt*slope0
+        slope1 = dx(times[i], y1)
+
+        y[:,i] = y[:,i-1] + dt * (slope0 + slope1) / 2.0
+
+    solution = ODESolution()
     solution.y = y
     solution.t = times
 
