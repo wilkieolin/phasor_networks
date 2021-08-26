@@ -602,7 +602,7 @@ def set_gpu(idx):
         tf.config.set_visible_devices(physical_devices[idx], 'GPU')
 
 """
-Return the similarity of two phase vectors defined by the FHNN framework/cosine similarity
+Return the similarity of two phase vectors defined by the FHRR framework/cosine similarity
 """
 def similarity(x, y):
     assert x.shape == y.shape, "Function is for comparing similarity of tensors with identical shapes and 1:1 mapping: " + str(x.shape) + " " + str(y.shape)

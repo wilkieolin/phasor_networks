@@ -472,11 +472,11 @@ class Conv2DPhasorModel(keras.Model):
     Predict the output class given a single set of output phases during a single dynamic cycle
     """
     def _predict_ind(self, phases, ind=-2):
-        last_phases = phases[:,ind,:]
-        dists = np.abs(last_phases - self.onehot_phase)
-        yh_i = np.argmin(dists, axis=1)
+        distance = tf.math.abs(phases - 0.5)
+        indices = o2 = tf.math.argmin(distance, axis=2)
+        selected = indices[:,ind]
     
-        return yh_i
+        return selected
 
     """
     Predict the output class for a single vector of phases produced from static execution
