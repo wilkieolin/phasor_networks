@@ -57,6 +57,51 @@ def construct_sparse(n1, n2, overscan=1.0):
             
     return tf.constant(m, dtype="float32")
 
+def count_spks_mlp(model, input_spks, t):
+    count_lambda = lambda x: np.sum(x[1] < t)
+    #get the average, cumulative number of input spikes at the current time
+    input_sum = np.mean(list(map(count_lambda, input_spks)))
+    #get the average, cumulative number of dense1 spikes at the current time
+    dense_spks = model.dense1.spike_trains
+    mid_sum = np.mean(list(map(count_lambda, dense_spks)))
+    
+    return [input_sum, mid_sum] 
+
+def count_spks_mlp_ratecode(input_spks, model_spikes, t):
+    #count spikes over all input neurons to current step
+    input_sum = np.mean(np.sum(input_spks[:,:,:,:,0:t], axis=(1,2,3,4)))
+    #get the average, cumulative number of dense1 spikes at the current time
+    dense_spks = model_spikes[0,0] > 0
+    mid_sum = np.mean(dense_spks[...,0:t].sum(axis=(1,2)))
+    
+    return [input_sum, mid_sum]  
+                
+def count_updates_mlp(model, t, dt=-1):
+    if dt < 0:
+        dt = model.dyn_params["max_step"]
+        
+    #count the neuronal updates
+    steps = np.floor(t / dt)
+    mid_updates = steps * model.n_hidden
+    last_updates = steps * model.n_classes
+    
+    return [mid_updates, last_updates]
+
+def count_ops_mlp(model, input_spks, t, dt=-1):
+    fanout = np.array([[model.n_hidden, model.n_classes]])
+    spk_ops = count_spks_mlp(model, input_spks, t) * fanout
+    
+    update_ops = count_updates_mlp(model, t, dt)
+    
+    ops = np.concatenate((spk_ops.ravel(), update_ops), axis=0)
+    return ops
+
+def count_ops_mlp_ratecode(input_spks, model_spks, t, n_hidden=100, n_classes=10):
+    fanout = np.array([[n_hidden, n_classes]])
+    spk_ops = count_spks_mlp_ratecode(input_spks, model_spks, t) * fanout
+    
+    return spk_ops.sum()
+
 """
 Remove random spikes from a spike train (dropout executed in time).
 """

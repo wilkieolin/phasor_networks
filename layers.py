@@ -142,7 +142,7 @@ class CmpxLinear(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", precision=-1, save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", max_step=-1, precision=-1, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -155,7 +155,11 @@ class CmpxLinear(keras.layers.Layer):
             for (var, i) in self.weights:
                 wg = var.value()
                 old_weights.append(wg)
-                var.assign(quantize_weights(wg, precision))            
+                var.assign(quantize_weights(wg, precision))
+        #override the default dt parameter if a new one is provided by argument
+        #otherwise, use the internal default value from model
+        if max_step < 0:
+            max_step = self.max_step
 
         for i in tqdm(range(n_batches)):
             #extract the spike indices and times for this input
@@ -169,12 +173,12 @@ class CmpxLinear(keras.layers.Layer):
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             if solver == "euler":
-                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, max_step)
             elif solver == "heun":
-                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, max_step)
             else:
                 #call scipy differential solver
-                sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+                sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=max_step)
                 
             if save_solutions:
                 #save the full solutions if desired
@@ -309,7 +313,7 @@ class CmpxConv2D(keras.layers.Layer):
 
     Training cannot be done currently through this op as it calls numpy/scipy differential solvers & not an adjoint-based one.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", save_solutions=False):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", max_step=-1, save_solutions=False):
         #array to save full solutions in
         solutions = []
         #array to save the output spike trains in
@@ -320,6 +324,11 @@ class CmpxConv2D(keras.layers.Layer):
         #calculated output shape & number of features
         out_shape = self.output_shape2
         n_features = np.prod(out_shape)
+
+        #override the default dt parameter if a new one is provided by argument
+        #otherwise, use the internal default value from model
+        if max_step < 0:
+            max_step = self.max_step
 
         for i in tqdm(range(n_batches)):
             #extract the spike indices and times for this input
@@ -333,12 +342,12 @@ class CmpxConv2D(keras.layers.Layer):
             #define the lambda function which updates potentials through time
             dz_fn = lambda t,z: self.dz(t, z, i_fn)
             if solver == "euler":
-                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+                sol = solve_euler(dz_fn, (0.0, self.exec_time), z0, max_step)
             elif solver == "heun":
-                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, self.max_step)
+                sol = solve_heun(dz_fn, (0.0, self.exec_time), z0, max_step)
             else:
                 #call scipy differential solver
-                sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=self.max_step)
+                sol = solve_ivp(dz_fn, (0.0, self.exec_time), z0, max_step=max_step)
 
             if save_solutions:
                 solutions.append(sol)

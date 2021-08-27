@@ -99,13 +99,22 @@ class PhasorModel(keras.Model):
 
 
     """
-    Make a prediction of class by using only the last cycle
+    Predict the output class using the last full cycle of phases in a dynamic execution
     """
-    def _last_prediction(self, yh):
-        #take the average across phases
-        yh_last = yh[:,-1,:]
-        yh_i = np.argmin(np.abs(yh_last - self.onehot_phase), axis=1)
+    def _predict_last(self, phases):
+        yh_i = self._predict_ind(phases, ind=-2)
+    
         return yh_i
+
+    """
+    Predict the output class given a single set of output phases during a single dynamic cycle
+    """
+    def _predict_ind(self, phases, ind=-2):
+        distance = tf.math.abs(phases - 0.5)
+        indices = tf.math.argmin(distance, axis=2)
+        selected = indices[:,ind]
+    
+        return selected
 
     """
     Make a prediction of class by averaging across all the output cycles
@@ -201,17 +210,14 @@ class PhasorModel(keras.Model):
     Call method for dynamic (temporal) network execution using R&F neurons.
     """
     def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, **kwargs):
-        x = self.flatten(inputs)
-        if self.projection == "NP":
-            x = self.image_encoder(x, training=True)
-        elif self.projection == "dot":
-            x = tf.multiply(self.direction, x)
-        #convert continuous time representations into periodic spike train
-        s = self.phase_to_train(x)
+        s = self.get_dynamic_input(inputs)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
         if jitter > 0.0:
             s = dynamic_jitter(s, jitter)
+
+        #store input spikes for future op estimates
+        self.input_spikes = s
 
         s = self.dense1.call_dynamic(s, dropout=dropout, jitter=jitter, **kwargs)
         #don't dropout/jitter at the final layer, do it at input layer instead
@@ -220,6 +226,44 @@ class PhasorModel(keras.Model):
         y = self.train_to_phase(s, depth=1)
 
         return np.stack(y, axis=0)
+
+    """
+    Count the cumulative number of spikes produced by the network before a certain timepoint
+    """
+    def count_spikes(self, time):
+        count_lambda = lambda x: np.sum(x[1] < time)
+        #get the average, cumulative number of input spikes at the current time
+        input_sum = np.mean(list(map(count_lambda, self.input_spks)))
+        #get the average, cumulative number of dense1 spikes at the current time
+        dense_spks = self.dense1.spike_trains
+        mid_sum = np.mean(list(map(count_lambda, dense_spks)))
+        
+        return [input_sum, mid_sum]  
+
+    """
+    Count the cumulative number of synaptic operations used by the network before a certain timepoint
+    """
+    def count_ops(self, time):
+        assert self.hasattr("input_spikes"), "Network must be run in dynamic mode before estimating ops"
+        fanout = np.array([[self.n_hidden, self.n_classes]])
+        spk_ops = self.count_spikes(time) * fanout
+
+        return spk_ops
+
+    """
+    Given the conventional input of image tensors, convert it to spike trains
+    appropriate for the model's dynamic processing
+    """
+    def get_dynamic_input(self, inputs):
+        x = self.flatten(inputs)
+        if self.projection == "NP":
+            x = self.image_encoder(x, training=True)
+        elif self.projection == "dot":
+            x = tf.multiply(self.direction, x)
+        #convert continuous time representations into periodic spike train
+        s = self.phase_to_train(x)
+
+        return s
 
     """
     Given a dataset, produce the network's output phases with either static or dynamic execution.
@@ -473,7 +517,7 @@ class Conv2DPhasorModel(keras.Model):
     """
     def _predict_ind(self, phases, ind=-2):
         distance = tf.math.abs(phases - 0.5)
-        indices = o2 = tf.math.argmin(distance, axis=2)
+        indices = tf.math.argmin(distance, axis=2)
         selected = indices[:,ind]
     
         return selected
@@ -564,27 +608,35 @@ class Conv2DPhasorModel(keras.Model):
     """
     Call method for dynamic (temporal) network execution using R&F neurons.
     """
-    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45"):
+    def call_dynamic(self, inputs, dropout=0.0, jitter=0.0, solver="RK45", max_step=-1):
         assert self.pooling == "min", "Dynamic execution currently only supports min-pool."
 
         exec_options = {"dropout": dropout, 
                         "jitter": jitter,
                         "solver": solver,
+                        "max_step": max_step,
                         }
-        x = self.project_fn(inputs)
-        x = self.batchnorm(x)
-        #convert continuous time representations into periodic spike train
-        s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
+
+        exec_options_nodropout = {"dropout": 0.0, 
+                        "jitter": jitter,
+                        "solver": solver,
+                        "max_step": max_step,
+                        }
+
+        s = self.get_dynamic_input(inputs)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
         if jitter > 0.0:
             s = dynamic_jitter(s, jitter)
 
+        #store input spikes for future op estimates
+        self.input_spikes = s
+
         #conv block 1
         print("Dynamic Execution: Conv 1")
         s = self.conv1.call_dynamic(s, **exec_options)
         #don't dropout before pooling, apply it after
-        s = self.conv2.call_dynamic(s, dropout=0.0, jitter=jitter, solver=solver)
+        s = self.conv2.call_dynamic(s, **exec_options_nodropout)
         s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size, depth=2)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
@@ -592,7 +644,7 @@ class Conv2DPhasorModel(keras.Model):
         #conv block 2
         print("Dynamic Execution: Conv 2")
         s = self.conv3.call_dynamic(s, **exec_options)
-        s = self.conv4.call_dynamic(s, dropout=0.0, jitter=jitter, solver=solver)
+        s = self.conv4.call_dynamic(s, **exec_options_nodropout)
         s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size, depth=4)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
@@ -604,11 +656,56 @@ class Conv2DPhasorModel(keras.Model):
         print("Dynamic Execution: Dense")
         s = self.dense1.call_dynamic(s, **exec_options)
         #don't dropout at final layer
-        s = self.dense2.call_dynamic(s, dropout=0.0, jitter=0.0, solver=solver)
+        s = self.dense2.call_dynamic(s, **exec_options_nodropout)
         #convert the spikes back to phases
         y = train_to_phase(s, self.dense2.output_shape2, depth=6, repeats=self.repeats, period=self.dyn_params["period"])
 
         return np.stack(y, axis=0)
+
+    """
+    Count the cumulative number of spikes produced by the network before a certain timepoint
+    """
+    def count_spikes(self, time):
+        count_lambda = lambda x: np.sum(x[1] < time)
+        #get the average, cumulative number of input spikes at the current time
+        input_sum = np.mean(list(map(count_lambda, self.input_spks)))
+        #get the average, cumulative number of internal spikes for each layer
+        conv1_sum = np.mean(list(map(count_lambda, self.conv1.spike_trains)))
+        conv2_sum = np.mean(list(map(count_lambda, self.conv2.spike_trains)))
+        conv3_sum = np.mean(list(map(count_lambda, self.conv3.spike_trains)))
+        conv4_sum = np.mean(list(map(count_lambda, self.conv4.spike_trains)))
+        dense1_sum = np.mean(list(map(count_lambda, self.dense1.spike_trains)))
+
+        return np.array([input_sum, 
+            conv1_sum,
+            conv2_sum,
+            conv3_sum,
+            conv4_sum,
+            dense1_sum])
+
+    """
+    Count the cumulative number of synaptic operations used by the network before a certain timepoint
+    """
+    def count_ops(self, time):
+        #compute the fanout for each layer receiving inputs
+        conv1_fanout = np.prod(self.conv1.output_shape2)
+        conv2_fanout = np.prod(self.conv2.output_shape2)
+        conv3_fanout = np.prod(self.conv3.output_shape2)
+        conv4_fanout = np.prod(self.conv4.output_shape2)
+        dense1_fanout = np.prod(self.dense1.output_shape2)
+        dense2_fanout = np.prod(self.dense2.output_shape2)
+
+        fanout = np.array([conv1_fanout, 
+            conv2_fanout,
+            conv3_fanout,
+            conv4_fanout,
+            dense1_fanout,
+            dense2_fanout])
+
+        spk_ops = self.count_spikes(time)
+        syn_ops = spk_ops * fanout
+
+        return syn_ops
 
     """
     Given a dataset, produce the network's output phases with either static or dynamic execution.
@@ -629,6 +726,18 @@ class Conv2DPhasorModel(keras.Model):
             outputs.append(yh)
 
         return tf.concat(outputs, axis=0)
+
+    """
+    Given the conventional input of image tensors, convert it to spike trains
+    appropriate for the model's dynamic processing
+    """
+    def get_dynamic_input(self, inputs):
+        x = self.project_fn(inputs)
+        x = self.batchnorm(x)
+        #convert continuous time representations into periodic spike train
+        s = phase_to_train(x, shape=self.image_shape, period=self.dyn_params["period"], repeats=self.repeats)
+
+        return s
 
     """
     Given a training set, train the network using standard gradient descent over a number of epochs with static execution.
