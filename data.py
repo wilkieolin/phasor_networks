@@ -26,7 +26,7 @@ def normalize_img(image, label):
 Load a standard TF image dataset and apply the normal transforms
 (cache, shuffle, batch, prefetch)
 """
-def load_dataset(dataset, n_batch=-1):
+def load_dataset(dataset, n_batch=-1,  normalize=True):
     (ds_train, ds_test), ds_info = tfds.load(dataset, 
                     split=['train', 'test'], 
                     data_dir="~/data",
@@ -34,8 +34,9 @@ def load_dataset(dataset, n_batch=-1):
                     as_supervised=True,
                     with_info=True)
 
-    ds_train = ds_train.map(
-    normalize_img, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    if normalize:
+        ds_train = ds_train.map(
+        normalize_img, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     ds_train = ds_train.cache()
     ds_train = ds_train.shuffle(ds_info.splits['train'].num_examples)
 

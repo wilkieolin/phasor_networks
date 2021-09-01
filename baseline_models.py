@@ -90,25 +90,26 @@ n_px_cifar = (32*32*3)
 def make_conv2D(weight_decay=1e-4, dropout_rate=0.25, n_hidden=1000):
     wdr=regularizers.l2(weight_decay)
 
-    model = keras.Sequential([layers.Input(input_shape_cifar),
-                            layers.BatchNormalization(),
+    input_layer = layers.Input(input_shape_cifar)
 
-                            layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv1", activation="relu"),
-                            layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv2", activation="relu"),
-                            layers.MaxPool2D((2,2), name="maxpool1"),
-                            layers.Dropout(dropout_rate, name="dropout1"),
+    layer = layers.BatchNormalization()(input_layer)
 
-                            layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv3", activation="relu"),
-                            layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv4", activation="relu"),
-                            layers.MaxPool2D((2,2), name="maxpool2"),
-                            layers.Dropout(dropout_rate, name="dropout2"),
+    layer = layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv1", activation="relu")(layer)
+    layer = layers.Conv2D(32, (3,3), kernel_regularizer=wdr, name="conv2", activation="relu")(layer)
+    layer = layers.MaxPool2D((2,2), name="maxpool1")(layer)
+    layer = layers.Dropout(dropout_rate, name="dropout1")(layer)
 
-                            layers.Flatten(name="flatten"),
-                            layers.Dense(n_hidden, name="dense1", activation="relu"),
-                            layers.Dropout(dropout_rate, name="dropout3"),
-                            layers.Dense(10, name="dense2", activation="softmax"),
+    layer = layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv3", activation="relu")(layer)
+    layer = layers.Conv2D(64, (3,3), kernel_regularizer=wdr, name="conv4", activation="relu")(layer)
+    layer = layers.MaxPool2D((2,2), name="maxpool2")(layer)
+    layer = layers.Dropout(dropout_rate, name="dropout2")(layer)
 
-                            ])
+    layer = layers.Flatten(name="flatten")(layer)
+    layer = layers.Dense(n_hidden, name="dense1", activation="relu")(layer)
+    layer = layers.Dropout(dropout_rate, name="dropout3")(layer)
+    layer = layers.Dense(10, name="dense2", activation="softmax")(layer)
+
+    model = keras.Model(input_layer, layer)
 
     model.compile(optimizer="rmsprop", 
               loss=keras.losses.SparseCategoricalCrossentropy(), 

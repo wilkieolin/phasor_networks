@@ -640,6 +640,7 @@ class Conv2DPhasorModel(keras.Model):
         s = dynamic_minpool2D(s, self.conv2.output_shape2, self.pool_layer1.pool_size, depth=2)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
+        self.pool1_spikes = s
 
         #conv block 2
         print("Dynamic Execution: Conv 2")
@@ -648,6 +649,7 @@ class Conv2DPhasorModel(keras.Model):
         s = dynamic_minpool2D(s, self.conv4.output_shape2, self.pool_layer2.pool_size, depth=4)
         if dropout > 0.0:
             s = dynamic_dropout(s, dropout)
+        self.pool2_spikes = s
 
         current_shape = self.pool_layer2.compute_output_shape([None, *self.conv4.output_shape2])[1:]
         s = dynamic_flatten(s, current_shape)
@@ -668,19 +670,25 @@ class Conv2DPhasorModel(keras.Model):
     def count_spikes(self, time):
         count_lambda = lambda x: np.sum(x[1] < time)
         #get the average, cumulative number of input spikes at the current time
-        input_sum = np.mean(list(map(count_lambda, self.input_spks)))
+        input_sum = np.mean(list(map(count_lambda, self.input_spikes)))
         #get the average, cumulative number of internal spikes for each layer
         conv1_sum = np.mean(list(map(count_lambda, self.conv1.spike_trains)))
         conv2_sum = np.mean(list(map(count_lambda, self.conv2.spike_trains)))
+        pool1_sum = np.mean(list(map(count_lambda, self.pool1_spikes)))
+
         conv3_sum = np.mean(list(map(count_lambda, self.conv3.spike_trains)))
         conv4_sum = np.mean(list(map(count_lambda, self.conv4.spike_trains)))
+        pool2_sum = np.mean(list(map(count_lambda, self.pool1_spikes)))
+
         dense1_sum = np.mean(list(map(count_lambda, self.dense1.spike_trains)))
 
         return np.array([input_sum, 
             conv1_sum,
             conv2_sum,
+            pool1_sum,
             conv3_sum,
             conv4_sum,
+            pool2_sum,
             dense1_sum])
 
     """
@@ -690,15 +698,21 @@ class Conv2DPhasorModel(keras.Model):
         #compute the fanout for each layer receiving inputs
         conv1_fanout = np.prod(self.conv1.output_shape2)
         conv2_fanout = np.prod(self.conv2.output_shape2)
+        pool1_fanout = 1
+
         conv3_fanout = np.prod(self.conv3.output_shape2)
         conv4_fanout = np.prod(self.conv4.output_shape2)
+        pool2_fanout = 1
+
         dense1_fanout = np.prod(self.dense1.output_shape2)
         dense2_fanout = np.prod(self.dense2.output_shape2)
 
         fanout = np.array([conv1_fanout, 
             conv2_fanout,
+            pool1_fanout,
             conv3_fanout,
             conv4_fanout,
+            pool2_fanout,
             dense1_fanout,
             dense2_fanout])
 
