@@ -61,6 +61,8 @@ class PhasorModel(keras.Model):
         self.projection = kwargs.get("projection", "dot")
         #the dropout rate between layers for training
         self.dropout_rate = kwargs.get("dropout_rate", 0.25)
+        #the exclusion angle around zero
+        self.mask_angle = kwargs.get("mask_angle", -1.0)
 
         #dynamic parameters
         self.dyn_params = {
@@ -193,16 +195,16 @@ class PhasorModel(keras.Model):
     """
     Standard call method for static (atemporal) network execution. 
     """
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         x = self.flatten(inputs)
         if self.projection == "NP":
             x = self.image_encoder(x, training=True)
         elif self.projection == "dot":
             x = tf.multiply(self.direction, x)
         x = self.dropout1(x)
-        x = self.dense1(x)
+        x = self.dense1(x, mask_angle=self.mask_angle)
         x = self.dropout2(x)
-        x = self.dense2(x)
+        x = self.dense2(x, mask_angle=self.mask_angle)
 
         return x
 

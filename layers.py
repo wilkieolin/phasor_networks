@@ -69,6 +69,13 @@ class CmpxLinear(keras.layers.Layer):
             trainable=True,
             name="w"
         )
+        self.b = self.add_weight(
+            shape=(self.units),
+            initializer="ones",
+            trainable=True,
+            name="b"
+        )
+        
         self.n_in = self.w.shape[0]
 
     """
@@ -219,17 +226,27 @@ class CmpxLinear(keras.layers.Layer):
     """
     Given a set of input phases, calculate the output phases using the atemporal/static method.
     """
-    def call_static(self, inputs, **kwargs):
+    def call_static(self, inputs, mask_angle : float = -1, **kwargs):
         #provide a second internal reference to input/output shapes on calling to avoid some awkwardness in current keras ops
         self.input_shape2 = inputs.shape[1:]
 
         pi = tf.constant(np.pi)
         #clip inputs to -1, 1 domain (pi-normalized phasor)
         x = tf.clip_by_value(inputs, -1, 1)
-        #convert the phase angles into complex vectors
-        x = phase_to_complex(x)
+        
+        if mask_angle > 0.0:
+            #mask values below an arc subtended from (-mask_angle, mask_angle) to zero magnitude
+            mask = tf.cast(tf.greater(tf.math.abs(inputs), mask_angle), x.dtype)
+            mask = tf.complex(mask, tf.zeros_like(mask))
+            #convert the phase angles into complex vectors
+            x = phase_to_complex(x)
+            x = tf.multiply(x, mask)
+        else:
+            x = phase_to_complex(x)
+        
         #scale the complex vectors by weight and sum
         x = tf.matmul(x, tf.complex(self.w, tf.zeros_like(self.w)))
+        x = tf.add(x, tf.complex(self.b, tf.zeros_like(self.b)))
         #convert them back to phase angles
         output = tf.math.angle(x) / pi
 
